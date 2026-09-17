@@ -32,29 +32,17 @@ struct RootView: View {
             ItemListView(store: store, sortOrder: $sortOrder)
                 .navigationSplitViewColumnWidth(min: 300, ideal: 336, max: 390)
                 .workspaceTitlebarBackground()
+                .overlay(alignment: .topTrailing) {
+                    toolbarActions
+                        .frame(height: WorkspaceTitlebarMetrics.height)
+                        .padding(.trailing, KeeTheme.Spacing.small)
+                        .offset(y: -WorkspaceTitlebarMetrics.height)
+                }
         } detail: {
             detailColumn
                 .workspaceTitlebarBackground()
         }
         .navigationSplitViewStyle(.balanced)
-        .toolbar {
-#if compiler(>=6.2)
-            if #available(macOS 26.0, *) {
-                ToolbarItem(placement: .primaryAction) {
-                    toolbarActions
-                }
-                .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .primaryAction) {
-                    toolbarActions
-                }
-            }
-#else
-            ToolbarItem(placement: .primaryAction) {
-                toolbarActions
-            }
-#endif
-        }
     }
 
     private var toolbarActions: some View {
@@ -89,11 +77,15 @@ private extension View {
                 .overlay(alignment: .bottom) {
                     Divider()
                 }
-                .frame(height: 52)
-                .offset(y: -52)
+                .frame(height: WorkspaceTitlebarMetrics.height)
+                .offset(y: -WorkspaceTitlebarMetrics.height)
                 .allowsHitTesting(false)
         }
     }
+}
+
+private enum WorkspaceTitlebarMetrics {
+    static let height: CGFloat = 52
 }
 
 private struct LockedVaultView: View {

@@ -26,11 +26,19 @@ final class ToolbarHoverUITests: XCTestCase {
         let sortButton = app.menuButtons["toolbar.sort"]
         let addButton = app.buttons["toolbar.add"]
         let actionGroup = app.groups["toolbar.actions"]
+        let detailSplitter = app.splitters.element(boundBy: 1)
+        let expectedTrailingInset: CGFloat = 8
         XCTAssertTrue(sortButton.waitForExistence(timeout: 3))
         XCTAssertTrue(addButton.waitForExistence(timeout: 3))
         XCTAssertTrue(actionGroup.waitForExistence(timeout: 3))
+        XCTAssertTrue(detailSplitter.waitForExistence(timeout: 3))
         XCTAssertEqual(actionGroup.frame.width, 80, accuracy: 0.5)
         XCTAssertEqual(actionGroup.frame.height, 40, accuracy: 0.5)
+        XCTAssertEqual(
+            actionGroup.frame.maxX,
+            detailSplitter.frame.minX - expectedTrailingInset,
+            accuracy: 0.5
+        )
 
         addButton.hover()
 
