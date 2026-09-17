@@ -16,11 +16,21 @@
 		A10000000000000000000007 /* ItemListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* ItemListView.swift */; };
 		A10000000000000000000008 /* ItemDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* ItemDetailView.swift */; };
 		A10000000000000000000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* SettingsView.swift */; };
+		A1000000000000000000000A /* ToolbarActionGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* ToolbarActionGroup.swift */; };
+		A1000000000000000000000B /* ItemSortOrder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* ItemSortOrder.swift */; };
 		A20000000000000000000001 /* VaultStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* VaultStoreTests.swift */; };
+		A30000000000000000000001 /* ToolbarHoverUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000001 /* ToolbarHoverUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		120000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E10000000000000000000002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E10000000000000000000001;
+			remoteInfo = KeeLocker;
+		};
+		120000000000000000000002 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E10000000000000000000002 /* Project object */;
 			proxyType = 1;
@@ -42,8 +52,12 @@
 		B1000000000000000000000A /* DESIGN.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = DESIGN.md; sourceTree = SOURCE_ROOT; };
 		B1000000000000000000000B /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = SOURCE_ROOT; };
 		B1000000000000000000000C /* KeeLocker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeeLocker.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1000000000000000000000D /* ToolbarActionGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolbarActionGroup.swift; sourceTree = "<group>"; };
+		B1000000000000000000000E /* ItemSortOrder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemSortOrder.swift; sourceTree = "<group>"; };
 		B20000000000000000000001 /* VaultStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultStoreTests.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* KeeLockerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KeeLockerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B30000000000000000000001 /* ToolbarHoverUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolbarHoverUITests.swift; sourceTree = "<group>"; };
+		B30000000000000000000002 /* KeeLockerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KeeLockerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +75,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C30000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -69,6 +90,7 @@
 			children = (
 				D10000000000000000000002 /* KeeLocker */,
 				D20000000000000000000001 /* KeeLockerTests */,
+				D30000000000000000000001 /* KeeLockerUITests */,
 				B1000000000000000000000A /* DESIGN.md */,
 				B1000000000000000000000B /* README.md */,
 				D10000000000000000000007 /* Products */,
@@ -91,6 +113,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000002 /* VaultItem.swift */,
+				B1000000000000000000000E /* ItemSortOrder.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -115,6 +138,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000005 /* RootView.swift */,
+				B1000000000000000000000D /* ToolbarActionGroup.swift */,
 				B10000000000000000000006 /* SidebarView.swift */,
 				B10000000000000000000007 /* ItemListView.swift */,
 				B10000000000000000000008 /* ItemDetailView.swift */,
@@ -128,6 +152,7 @@
 			children = (
 				B1000000000000000000000C /* KeeLocker.app */,
 				B20000000000000000000002 /* KeeLockerTests.xctest */,
+				B30000000000000000000002 /* KeeLockerUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -138,6 +163,14 @@
 				B20000000000000000000001 /* VaultStoreTests.swift */,
 			);
 			path = KeeLockerTests;
+			sourceTree = "<group>";
+		};
+		D30000000000000000000001 /* KeeLockerUITests */ = {
+			isa = PBXGroup;
+			children = (
+				B30000000000000000000001 /* ToolbarHoverUITests.swift */,
+			);
+			path = KeeLockerUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -178,6 +211,24 @@
 			productReference = B20000000000000000000002 /* KeeLockerTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		E30000000000000000000001 /* KeeLockerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F30000000000000000000001 /* Build configuration list for PBXNativeTarget "KeeLockerUITests" */;
+			buildPhases = (
+				C30000000000000000000002 /* Sources */,
+				C30000000000000000000001 /* Frameworks */,
+				C30000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				130000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = KeeLockerUITests;
+			productName = KeeLockerUITests;
+			productReference = B30000000000000000000002 /* KeeLockerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -192,6 +243,10 @@
 						CreatedOnToolsVersion = 26.0;
 					};
 					E20000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = E10000000000000000000001;
+					};
+					E30000000000000000000001 = {
 						CreatedOnToolsVersion = 26.0;
 						TestTargetID = E10000000000000000000001;
 					};
@@ -212,6 +267,7 @@
 			targets = (
 				E10000000000000000000001 /* KeeLocker */,
 				E20000000000000000000001 /* KeeLockerTests */,
+				E30000000000000000000001 /* KeeLockerUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -231,6 +287,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C30000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -240,6 +303,7 @@
 			files = (
 				A10000000000000000000001 /* KeeLockerApp.swift in Sources */,
 				A10000000000000000000002 /* VaultItem.swift in Sources */,
+				A1000000000000000000000B /* ItemSortOrder.swift in Sources */,
 				A10000000000000000000003 /* VaultStore.swift in Sources */,
 				A10000000000000000000004 /* KeeTheme.swift in Sources */,
 				A10000000000000000000005 /* RootView.swift in Sources */,
@@ -247,6 +311,7 @@
 				A10000000000000000000007 /* ItemListView.swift in Sources */,
 				A10000000000000000000008 /* ItemDetailView.swift in Sources */,
 				A10000000000000000000009 /* SettingsView.swift in Sources */,
+				A1000000000000000000000A /* ToolbarActionGroup.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -258,6 +323,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C30000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A30000000000000000000001 /* ToolbarHoverUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -265,6 +338,11 @@
 			isa = PBXTargetDependency;
 			target = E10000000000000000000001 /* KeeLocker */;
 			targetProxy = 120000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		130000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E10000000000000000000001 /* KeeLocker */;
+			targetProxy = 120000000000000000000002 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -459,6 +537,32 @@
 			};
 			name = Release;
 		};
+		310000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keelocker.desktop.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = KeeLocker;
+			};
+			name = Debug;
+		};
+		310000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.keelocker.desktop.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = KeeLocker;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -485,6 +589,15 @@
 			buildConfigurations = (
 				210000000000000000000001 /* Debug */,
 				210000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F30000000000000000000001 /* Build configuration list for PBXNativeTarget "KeeLockerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				310000000000000000000001 /* Debug */,
+				310000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

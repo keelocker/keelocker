@@ -19,7 +19,7 @@ The app follows the system appearance by default. Light, dark and system modes a
 
 ## Tests
 
-Run the macOS unit tests from Terminal:
+Run the macOS unit and UI tests from Terminal:
 
 ```sh
 xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS' test

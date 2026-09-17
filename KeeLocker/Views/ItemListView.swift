@@ -2,8 +2,8 @@ import SwiftUI
 
 struct ItemListView: View {
     @ObservedObject var store: VaultStore
+    @Binding var sortOrder: ItemSortOrder
     @AppStorage("concealUsernames") private var concealUsernames = false
-    @State private var sortOrder: ItemSortOrder = .recent
 
     private var sortedItems: [VaultItem] {
         switch sortOrder {
@@ -68,22 +68,6 @@ struct ItemListView: View {
                 }
 
                 Spacer()
-
-                Menu {
-                    Picker("Sort by", selection: $sortOrder) {
-                        ForEach(ItemSortOrder.allCases) { order in
-                            Label(order.title, systemImage: order.iconName)
-                                .tag(order)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .menuStyle(.borderlessButton)
-                .help("Sort logins")
             }
 
             SearchField(text: $store.searchQuery)
@@ -140,27 +124,6 @@ private struct SearchField: View {
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
-    }
-}
-
-private enum ItemSortOrder: String, CaseIterable, Identifiable {
-    case recent
-    case title
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .recent: "Recently updated"
-        case .title: "Title"
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .recent: "clock"
-        case .title: "textformat"
         }
     }
 }

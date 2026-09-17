@@ -40,6 +40,17 @@
                ReferencedContainer = "container:KeeLocker.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E30000000000000000000001"
+               BuildableName = "KeeLockerUITests.xctest"
+               BlueprintName = "KeeLockerUITests"
+               ReferencedContainer = "container:KeeLocker.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

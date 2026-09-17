@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @StateObject private var store = VaultStore()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var sortOrder: ItemSortOrder = .recent
 
     var body: some View {
         Group {
@@ -28,7 +29,7 @@ struct RootView: View {
             SidebarView(store: store)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 242, max: 272)
         } content: {
-            ItemListView(store: store)
+            ItemListView(store: store, sortOrder: $sortOrder)
                 .navigationSplitViewColumnWidth(min: 300, ideal: 336, max: 390)
                 .workspaceTitlebarBackground()
         } detail: {
@@ -37,13 +38,30 @@ struct RootView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button(action: store.addItem) {
-                    Label("New login", systemImage: "plus")
+#if compiler(>=6.2)
+            if #available(macOS 26.0, *) {
+                ToolbarItem(placement: .primaryAction) {
+                    toolbarActions
                 }
-                .help("New login (⌘N)")
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    toolbarActions
+                }
             }
+#else
+            ToolbarItem(placement: .primaryAction) {
+                toolbarActions
+            }
+#endif
         }
+    }
+
+    private var toolbarActions: some View {
+        ToolbarActionGroup(
+            sortOrder: $sortOrder,
+            addAction: store.addItem
+        )
     }
 
     @ViewBuilder
