@@ -42,16 +42,6 @@ struct RootView: View {
                     Label("New login", systemImage: "plus")
                 }
                 .help("New login (⌘N)")
-
-                Menu {
-                    Button("Import vault…", systemImage: "square.and.arrow.down") { }
-                        .disabled(true)
-                    Button("Export vault…", systemImage: "square.and.arrow.up") { }
-                        .disabled(true)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .help("More actions")
             }
         }
     }
