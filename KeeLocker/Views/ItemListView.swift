@@ -44,7 +44,7 @@ struct ItemListView: View {
                     }
                     .onChange(of: store.selectedItemID) { _, selectedID in
                         guard let selectedID else { return }
-                        proxy.scrollTo(selectedID, anchor: .center)
+                        proxy.scrollTo(selectedID)
                     }
                 }
             }
