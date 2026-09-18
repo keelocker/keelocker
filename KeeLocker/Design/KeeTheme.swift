@@ -24,6 +24,10 @@ enum KeeTheme {
         static let xLarge: CGFloat = 32
         static let huge: CGFloat = 40
     }
+
+    enum Toolbar {
+        static let controlHeight: CGFloat = 40
+    }
 }
 extension ItemColor {
     var color: Color {

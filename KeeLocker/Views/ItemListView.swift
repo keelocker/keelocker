@@ -50,27 +50,20 @@ struct ItemListView: View {
             }
         }
         .background(KeeTheme.listSurface)
-        .onChange(of: store.searchQuery) { _, _ in
-            store.reconcileSelection()
-        }
     }
 
     private var listHeader: some View {
-        VStack(spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(store.currentTitle)
-                        .font(.system(size: 23, weight: .semibold))
-                        .tracking(-0.22)
-                    Text("\(store.visibleItems.count) \(store.visibleItems.count == 1 ? "login" : "logins")")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(store.currentTitle)
+                    .font(.system(size: 23, weight: .semibold))
+                    .tracking(-0.22)
+                Text("\(store.visibleItems.count) \(store.visibleItems.count == 1 ? "login" : "logins")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            SearchField(text: $store.searchQuery)
+            Spacer()
         }
     }
 
@@ -90,41 +83,6 @@ struct ItemListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(24)
-    }
-}
-
-private struct SearchField: View {
-    @Binding var text: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-
-            TextField("Search logins", text: $text)
-                .textFieldStyle(.plain)
-
-            if !text.isEmpty {
-                Button {
-                    text = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(maxWidth: .infinity, minHeight: 36)
-        .background(
-            Color.primary.opacity(0.035),
-            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
     }
 }
 

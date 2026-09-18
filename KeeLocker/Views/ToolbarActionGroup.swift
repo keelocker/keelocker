@@ -84,7 +84,7 @@ private struct ToolbarHoverProbeModifier: ViewModifier {
 }
 
 private enum ToolbarActionMetrics {
-    static let slotSize: CGFloat = 40
+    static let slotSize = KeeTheme.Toolbar.controlHeight
     static let hoverDiameter: CGFloat = 32
     static let hoverOpacity: Double = 0.075
 }

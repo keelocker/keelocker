@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RootView: View {
@@ -43,6 +44,13 @@ struct RootView: View {
                 .workspaceTitlebarBackground()
         }
         .navigationSplitViewStyle(.balanced)
+        .overlay(alignment: .topTrailing) {
+            ToolbarSearchField(text: $store.searchQuery)
+                .frame(width: 240)
+                .padding(.trailing, KeeTheme.Spacing.medium)
+                .frame(height: WorkspaceTitlebarMetrics.height)
+                .offset(y: -WorkspaceTitlebarMetrics.height)
+        }
     }
 
     private var toolbarActions: some View {
@@ -55,6 +63,7 @@ struct RootView: View {
     @ViewBuilder
     private var detailColumn: some View {
         if let selectedID = store.selectedItemID,
+           store.visibleItems.contains(where: { $0.id == selectedID }),
            let index = store.items.firstIndex(where: { $0.id == selectedID }) {
             ItemDetailView(
                 item: Binding(
@@ -86,6 +95,146 @@ private extension View {
 
 private enum WorkspaceTitlebarMetrics {
     static let height: CGFloat = 52
+}
+
+private struct ToolbarSearchField: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: KeeTheme.Spacing.small) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            TextField("Search", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .focused($isFocused)
+                .onSubmit {
+                    isFocused = false
+                }
+                .onExitCommand {
+                    isFocused = false
+                }
+                .accessibilityLabel("Search logins")
+                .accessibilityIdentifier("toolbar.search")
+                .modifier(SearchFocusProbeModifier(isFocused: isFocused, text: text))
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(PressableButtonStyle())
+                .help("Clear search")
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, KeeTheme.Spacing.medium)
+        .frame(height: KeeTheme.Toolbar.controlHeight)
+        .background(KeeTheme.raisedSurface, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(
+                    isFocused
+                        ? KeeTheme.accent.opacity(0.72)
+                        : KeeTheme.separator.opacity(0.55),
+                    lineWidth: isFocused ? 1 : 0.5
+                )
+        }
+        .background {
+            SearchFocusMonitor {
+                isFocused = false
+            }
+        }
+        .contentShape(Capsule())
+        .onTapGesture {
+            isFocused = true
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("toolbar.searchContainer")
+    }
+}
+
+private struct SearchFocusProbeModifier: ViewModifier {
+    let isFocused: Bool
+    let text: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+#if DEBUG
+        if ProcessInfo.processInfo.environment["KEELOCKER_UI_TESTING"] == "1" {
+            content.accessibilityValue("\(isFocused ? "focused" : "idle")|\(text)")
+        } else {
+            content
+        }
+#else
+        content
+#endif
+    }
+}
+
+private struct SearchFocusMonitor: NSViewRepresentable {
+    let onClickOutside: () -> Void
+
+    func makeNSView(context: Context) -> MonitoringView {
+        let view = MonitoringView()
+        view.onClickOutside = onClickOutside
+        return view
+    }
+
+    func updateNSView(_ view: MonitoringView, context: Context) {
+        view.onClickOutside = onClickOutside
+    }
+
+    final class MonitoringView: NSView {
+        var onClickOutside: () -> Void = {}
+        private var eventMonitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+
+            if window == nil {
+                stopMonitoring()
+            } else {
+                startMonitoring()
+            }
+        }
+
+        deinit {
+            stopMonitoring()
+        }
+
+        private func startMonitoring() {
+            guard eventMonitor == nil else { return }
+
+            eventMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown]
+            ) { [weak self] event in
+                guard let self, event.window === self.window else { return event }
+
+                let location = self.convert(event.locationInWindow, from: nil)
+                guard !self.bounds.contains(location) else { return event }
+
+                DispatchQueue.main.async { [weak self] in
+                    self?.onClickOutside()
+                }
+
+                return event
+            }
+        }
+
+        private func stopMonitoring() {
+            guard let eventMonitor else { return }
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+    }
 }
 
 private struct LockedVaultView: View {
