@@ -31,12 +31,15 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 242, max: 272)
         } content: {
             ItemListView(store: store, sortOrder: $sortOrder)
-                .navigationSplitViewColumnWidth(min: 300, ideal: 336, max: 390)
+                .navigationSplitViewColumnWidth(
+                    min: columnVisibility == .all ? 300 : 336,
+                    ideal: 336,
+                    max: 390
+                )
                 .workspaceTitlebarBackground()
-                .overlay(alignment: .topTrailing) {
-                    toolbarActions
+                .overlay(alignment: .top) {
+                    listToolbar
                         .frame(height: WorkspaceTitlebarMetrics.height)
-                        .padding(.trailing, KeeTheme.Spacing.small)
                         .offset(y: -WorkspaceTitlebarMetrics.height)
                 }
         } detail: {
@@ -58,6 +61,39 @@ struct RootView: View {
             sortOrder: $sortOrder,
             addAction: store.addItem
         )
+    }
+
+    private var listTitle: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(store.currentTitle)
+                .font(.system(size: 15, weight: .semibold))
+                .tracking(-0.1)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text("\(store.visibleItems.count) \(store.visibleItems.count == 1 ? "login" : "logins")")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("toolbar.listTitle")
+    }
+
+    private var listToolbar: some View {
+        HStack(spacing: KeeTheme.Spacing.medium) {
+            listTitle
+
+            Spacer(minLength: KeeTheme.Spacing.small)
+
+            toolbarActions
+        }
+        .padding(
+            .leading,
+            columnVisibility == .all
+                ? KeeTheme.Spacing.regular
+                : WorkspaceTitlebarMetrics.collapsedSidebarLeadingInset
+        )
+        .padding(.trailing, KeeTheme.Spacing.small)
     }
 
     @ViewBuilder
@@ -95,6 +131,7 @@ private extension View {
 
 private enum WorkspaceTitlebarMetrics {
     static let height: CGFloat = 52
+    static let collapsedSidebarLeadingInset: CGFloat = 154
 }
 
 private struct ToolbarSearchField: View {
@@ -112,6 +149,12 @@ private struct ToolbarSearchField: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .focused($isFocused)
+                .onChange(of: text) { _, _ in
+                    guard isFocused else { return }
+                    Task { @MainActor in
+                        isFocused = true
+                    }
+                }
                 .onSubmit {
                     isFocused = false
                 }

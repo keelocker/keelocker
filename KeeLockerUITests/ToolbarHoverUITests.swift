@@ -51,6 +51,61 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertTrue(waitForValue("idle", on: addButton))
     }
 
+    func testListTitleLivesInsideToolbar() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let listTitle = app.groups["toolbar.listTitle"]
+        let actionGroup = app.groups["toolbar.actions"]
+        XCTAssertTrue(listTitle.waitForExistence(timeout: 3))
+        XCTAssertTrue(actionGroup.waitForExistence(timeout: 3))
+        XCTAssertEqual(listTitle.frame.midY, actionGroup.frame.midY, accuracy: 1)
+        XCTAssertLessThan(listTitle.frame.maxX, actionGroup.frame.minX)
+    }
+
+    func testListTitleClearsSidebarToggleWhenSidebarIsHidden() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let favoritesButton = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Favorites")
+        ).firstMatch
+        XCTAssertTrue(favoritesButton.waitForExistence(timeout: 3))
+        favoritesButton.click()
+
+        let sidebarToggle = app.toolbars.buttons.firstMatch
+        XCTAssertTrue(sidebarToggle.waitForExistence(timeout: 3))
+        sidebarToggle.click()
+
+        let listTitle = app.groups["toolbar.listTitle"]
+        let actionGroup = app.groups["toolbar.actions"]
+        XCTAssertTrue(listTitle.waitForExistence(timeout: 3))
+        XCTAssertTrue(actionGroup.waitForExistence(timeout: 3))
+        XCTAssertTrue(listTitle.isHittable)
+        XCTAssertGreaterThanOrEqual(listTitle.frame.minX, sidebarToggle.frame.maxX + 2)
+        XCTAssertLessThan(listTitle.frame.maxX, actionGroup.frame.minX)
+        XCTAssertEqual(listTitle.frame.midY, actionGroup.frame.midY, accuracy: 1)
+
+        let detailSplitter = app.splitters.firstMatch
+        XCTAssertTrue(detailSplitter.waitForExistence(timeout: 3))
+        let divider = detailSplitter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        divider.press(
+            forDuration: 0.1,
+            thenDragTo: divider.withOffset(CGVector(dx: -80, dy: 0))
+        )
+        XCTAssertGreaterThanOrEqual(actionGroup.frame.minX - listTitle.frame.maxX, 8)
+
+        sidebarToggle.click()
+
+        let expandedTitle = app.groups["toolbar.listTitle"]
+        let sidebarSplitter = app.splitters.element(boundBy: 0)
+        XCTAssertTrue(expandedTitle.waitForExistence(timeout: 3))
+        XCTAssertTrue(sidebarSplitter.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.groups.matching(identifier: "toolbar.listTitle").count, 1)
+        XCTAssertGreaterThan(expandedTitle.frame.minX, sidebarSplitter.frame.maxX)
+        XCTAssertLessThan(expandedTitle.frame.maxX, actionGroup.frame.minX)
+    }
+
     func testToolbarSearchMatchesActionHeight() {
         let app = XCUIApplication()
         app.launch()
@@ -83,6 +138,15 @@ final class ToolbarHoverUITests: XCTestCase {
             .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 2))
             .click()
         XCTAssertTrue(waitForFocusState("idle", on: searchField))
+
+        searchField.click()
+        searchField.typeText("151")
+        XCTAssertTrue(waitForValue("focused|151", on: searchField))
+
+        searchContainer
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 2))
+            .click()
+        XCTAssertTrue(waitForFocusState("idle", on: searchField))
     }
 
     func testToolbarSearchKeepsFocusWhenFilteringHidesCurrentSelection() {
@@ -94,10 +158,13 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertTrue(searchField.waitForExistence(timeout: 3))
 
         searchField.click()
-        searchField.typeText("GitHub")
+        searchField.typeText("151")
 
         let updatedSearchField = app.descendants(matching: .any)["toolbar.search"]
-        XCTAssertTrue(waitForValue("focused|GitHub", on: updatedSearchField))
+        XCTAssertTrue(
+            waitForValue("focused|151", on: updatedSearchField),
+            "Actual search value: \(String(describing: updatedSearchField.value))"
+        )
         XCTAssertTrue(app.staticTexts["1 login"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.staticTexts["Select a login"].waitForExistence(timeout: 2))
     }
@@ -111,10 +178,13 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertTrue(searchField.waitForExistence(timeout: 3))
 
         searchField.click()
-        searchField.typeText("zzzz")
+        searchField.typeText("0000")
 
         let updatedSearchField = app.descendants(matching: .any)["toolbar.search"]
-        XCTAssertTrue(waitForValue("focused|zzzz", on: updatedSearchField))
+        XCTAssertTrue(
+            waitForValue("focused|0000", on: updatedSearchField),
+            "Actual search value: \(String(describing: updatedSearchField.value))"
+        )
         XCTAssertTrue(app.staticTexts["No matching logins"].waitForExistence(timeout: 2))
     }
 

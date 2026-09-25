@@ -16,13 +16,6 @@ struct ItemListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            listHeader
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
-
-            Divider()
-
             if sortedItems.isEmpty {
                 emptyState
             } else {
@@ -50,21 +43,6 @@ struct ItemListView: View {
             }
         }
         .background(KeeTheme.listSurface)
-    }
-
-    private var listHeader: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(store.currentTitle)
-                    .font(.system(size: 23, weight: .semibold))
-                    .tracking(-0.22)
-                Text("\(store.visibleItems.count) \(store.visibleItems.count == 1 ? "login" : "logins")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-        }
     }
 
     private var emptyState: some View {

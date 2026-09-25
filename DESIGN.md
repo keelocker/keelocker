@@ -30,6 +30,8 @@ The app uses the macOS system typeface so controls, localization and text metric
 
 The default window is 1180 by 760 pt. Sidebar width is 220 to 272 pt, item list width is 300 to 390 pt, and detail content has a readable 760 pt maximum. The spacing ladder is 4, 8, 12, 16, 24, 32 and 40 pt.
 
+When the sidebar is hidden, the item list stays at least 336 pt wide so its title clears the window controls and list actions.
+
 ## 6. Depth and elevation
 
 Depth comes from native background steps. Sidebar material is the only translucent plane. The item list is one luminance step away from the detail canvas; grouped credential fields are another step. Shadows are reserved for icon tiles and high-value controls.
