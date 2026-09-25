@@ -247,6 +247,7 @@ private struct TitlebarSplitResizeMonitor: NSViewRepresentable {
                       let divider = titlebarDivider(in: window, at: event.locationInWindow) else {
                     return event
                 }
+                window.makeFirstResponder(nil)
                 blockWindowMovement(window)
                 draggedSplit = divider.split
                 draggedDividerIndex = divider.index
