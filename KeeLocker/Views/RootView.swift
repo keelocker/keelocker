@@ -47,6 +47,7 @@ struct RootView: View {
                 .workspaceTitlebarBackground()
         }
         .navigationSplitViewStyle(.balanced)
+        .background(TitlebarSplitResizeMonitor())
         .overlay(alignment: .topTrailing) {
             ToolbarSearchField(text: $store.searchQuery)
                 .frame(width: 240)
@@ -132,6 +133,210 @@ private extension View {
 private enum WorkspaceTitlebarMetrics {
     static let height: CGFloat = 52
     static let collapsedSidebarLeadingInset: CGFloat = 154
+}
+
+private struct TitlebarSplitResizeMonitor: NSViewRepresentable {
+    // The titlebar can move the window even while the split divider shows a resize cursor.
+    // Disable window movement on hover, before AppKit handles the mouse-down event.
+    func makeNSView(context: Context) -> MonitoringView {
+        MonitoringView()
+    }
+
+    func updateNSView(_ view: MonitoringView, context: Context) {}
+
+    final class MonitoringView: NSView {
+        private var eventMonitor: Any?
+        private var resignObserver: Any?
+        private weak var trackedTitlebar: NSView?
+        private var titlebarTrackingArea: NSTrackingArea?
+        private weak var draggedSplit: NSSplitView?
+        private var draggedDividerIndex: Int?
+        private var initialDividerPosition: CGFloat = 0
+        private var initialMouseX: CGFloat = 0
+        private weak var movementWindow: NSWindow?
+        private var wasWindowMovable: Bool?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopMonitoring()
+            if window != nil {
+                startMonitoring()
+            }
+        }
+
+        deinit {
+            stopMonitoring()
+        }
+
+        private func startMonitoring() {
+            guard let window else { return }
+            // Mouse-move events in the titlebar reach the standard buttons' parent view.
+            if let titlebar = window.standardWindowButton(.closeButton)?.superview {
+                let trackingArea = NSTrackingArea(
+                    rect: .zero,
+                    options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+                    owner: self,
+                    userInfo: nil
+                )
+                titlebar.addTrackingArea(trackingArea)
+                trackedTitlebar = titlebar
+                titlebarTrackingArea = trackingArea
+            }
+            resignObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.draggedSplit = nil
+                self.draggedDividerIndex = nil
+                self.restoreWindowMovability()
+            }
+            eventMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
+            ) { [weak self] event in
+                guard let self else { return event }
+                if self.draggedDividerIndex == nil && event.window !== self.window {
+                    return event
+                }
+                return self.handle(event)
+            }
+        }
+
+        private func stopMonitoring() {
+            if let eventMonitor {
+                NSEvent.removeMonitor(eventMonitor)
+                self.eventMonitor = nil
+            }
+            if let resignObserver {
+                NotificationCenter.default.removeObserver(resignObserver)
+                self.resignObserver = nil
+            }
+            if let trackedTitlebar, let titlebarTrackingArea {
+                trackedTitlebar.removeTrackingArea(titlebarTrackingArea)
+            }
+            trackedTitlebar = nil
+            titlebarTrackingArea = nil
+            draggedSplit = nil
+            draggedDividerIndex = nil
+            restoreWindowMovability()
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            if draggedDividerIndex == nil {
+                updateWindowMovability(at: event.locationInWindow)
+            }
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            if draggedDividerIndex == nil {
+                updateWindowMovability(at: event.locationInWindow)
+            }
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            if draggedDividerIndex == nil {
+                restoreWindowMovability()
+            }
+        }
+
+        private func handle(_ event: NSEvent) -> NSEvent? {
+            switch event.type {
+            case .leftMouseDown:
+                guard let window,
+                      let divider = titlebarDivider(in: window, at: event.locationInWindow) else {
+                    return event
+                }
+                blockWindowMovement(window)
+                draggedSplit = divider.split
+                draggedDividerIndex = divider.index
+                initialDividerPosition = divider.position
+                initialMouseX = event.locationInWindow.x
+                return nil
+
+            case .leftMouseDragged:
+                guard let draggedSplit, let draggedDividerIndex else { return event }
+                let position = initialDividerPosition + event.locationInWindow.x - initialMouseX
+                draggedSplit.setPosition(position, ofDividerAt: draggedDividerIndex)
+                return nil
+
+            case .leftMouseUp:
+                guard draggedDividerIndex != nil else { return event }
+                draggedSplit = nil
+                draggedDividerIndex = nil
+                let location = event.locationInWindow
+                let dragWindow = window
+                // Wait until AppKit finishes the mouse-up before allowing titlebar dragging again.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.window === dragWindow,
+                          self.draggedDividerIndex == nil else { return }
+                    self.updateWindowMovability(at: location)
+                }
+                return nil
+
+            default:
+                return event
+            }
+        }
+
+        private func updateWindowMovability(at location: NSPoint) {
+            guard let window else { return }
+            if titlebarDivider(in: window, at: location) == nil {
+                restoreWindowMovability()
+            } else {
+                blockWindowMovement(window)
+            }
+        }
+
+        private func blockWindowMovement(_ window: NSWindow) {
+            guard movementWindow !== window else { return }
+            restoreWindowMovability()
+            movementWindow = window
+            wasWindowMovable = window.isMovable
+            window.isMovable = false
+        }
+
+        private func restoreWindowMovability() {
+            if let movementWindow, let wasWindowMovable {
+                movementWindow.isMovable = wasWindowMovable
+            }
+            movementWindow = nil
+            wasWindowMovable = nil
+        }
+
+        private func titlebarDivider(
+            in window: NSWindow,
+            at location: NSPoint
+        ) -> (split: NSSplitView, index: Int, position: CGFloat)? {
+            let distanceFromTop = window.frame.height - location.y
+            guard (0...WorkspaceTitlebarMetrics.height).contains(distanceFromTop),
+                  let contentView = window.contentView else { return nil }
+            return findDivider(in: contentView, at: location)
+        }
+
+        private func findDivider(
+            in view: NSView,
+            at location: NSPoint
+        ) -> (split: NSSplitView, index: Int, position: CGFloat)? {
+            if let split = view as? NSSplitView, split.isVertical {
+                let x = split.convert(location, from: nil).x
+                for (index, pane) in split.arrangedSubviews.dropLast().enumerated() {
+                    let position = pane.frame.maxX
+                    if abs(x - position) <= 6 {
+                        return (split, index, position)
+                    }
+                }
+            }
+
+            for child in view.subviews {
+                if let divider = findDivider(in: child, at: location) {
+                    return divider
+                }
+            }
+            return nil
+        }
+    }
 }
 
 private struct ToolbarSearchField: View {
