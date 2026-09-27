@@ -5,7 +5,9 @@ KeeLocker is a native macOS password manager interface prototype built with Swif
 ## Requirements
 
 - macOS 14 or newer
-- Xcode 16 or newer
+- Xcode 26 or newer
+
+The sort and add actions are standard SwiftUI toolbar items. macOS manages their shared background, sizing, hover and pressed states, including Liquid Glass on macOS 26 and newer.
 
 ## Run
 

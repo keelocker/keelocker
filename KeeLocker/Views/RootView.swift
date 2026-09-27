@@ -5,6 +5,7 @@ struct RootView: View {
     @StateObject private var store = VaultStore()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sortOrder: ItemSortOrder = .recent
+    @State private var listToolbarTitleWidth: CGFloat?
 
     var body: some View {
         Group {
@@ -37,10 +38,19 @@ struct RootView: View {
                     max: 390
                 )
                 .workspaceTitlebarBackground()
-                .overlay(alignment: .top) {
-                    listToolbar
-                        .frame(height: WorkspaceTitlebarMetrics.height)
-                        .offset(y: -WorkspaceTitlebarMetrics.height)
+                .background(ListToolbarAlignment(titleWidth: $listToolbarTitleWidth))
+                .toolbar {
+                    if #available(macOS 26.0, *) {
+                        ToolbarItem(id: "list.title", placement: .automatic) {
+                            listTitle
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    } else {
+                        ToolbarItem(id: "list.title", placement: .automatic) {
+                            listTitle
+                        }
+                    }
+                    ToolbarActionGroup(sortOrder: $sortOrder, addAction: store.addItem)
                 }
         } detail: {
             detailColumn
@@ -57,13 +67,6 @@ struct RootView: View {
         }
     }
 
-    private var toolbarActions: some View {
-        ToolbarActionGroup(
-            sortOrder: $sortOrder,
-            addAction: store.addItem
-        )
-    }
-
     private var listTitle: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(store.currentTitle)
@@ -76,25 +79,9 @@ struct RootView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
+        .frame(width: listToolbarTitleWidth, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("toolbar.listTitle")
-    }
-
-    private var listToolbar: some View {
-        HStack(spacing: KeeTheme.Spacing.medium) {
-            listTitle
-
-            Spacer(minLength: KeeTheme.Spacing.small)
-
-            toolbarActions
-        }
-        .padding(
-            .leading,
-            columnVisibility == .all
-                ? KeeTheme.Spacing.regular
-                : WorkspaceTitlebarMetrics.collapsedSidebarLeadingInset
-        )
-        .padding(.trailing, KeeTheme.Spacing.small)
     }
 
     @ViewBuilder
@@ -132,7 +119,78 @@ private extension View {
 
 private enum WorkspaceTitlebarMetrics {
     static let height: CGFloat = 52
-    static let collapsedSidebarLeadingInset: CGFloat = 154
+}
+
+// SwiftUI's window-wide flexible spacer cannot align items to the middle split column.
+// Measure public NSToolbarItem views and let the title absorb only this column's free space.
+private struct ListToolbarAlignment: NSViewRepresentable {
+    @Binding var titleWidth: CGFloat?
+
+    func makeNSView(context: Context) -> AlignmentView { AlignmentView() }
+
+    func updateNSView(_ view: AlignmentView, context: Context) {
+        view.updateTitleWidth = { titleWidth = $0 }
+        view.scheduleUpdate()
+    }
+
+    final class AlignmentView: NSView {
+        var updateTitleWidth: ((CGFloat) -> Void)?
+        private var observers: [NSObjectProtocol] = []
+        private var updatePending = false
+        private var lastWidth: CGFloat?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
+            guard let window else { return }
+            for name in [NSWindow.didUpdateNotification, NSWindow.didResizeNotification] {
+                observers.append(NotificationCenter.default.addObserver(
+                    forName: name, object: window, queue: .main
+                ) { [weak self] _ in
+                    self?.scheduleUpdate()
+                })
+            }
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSSplitView.didResizeSubviewsNotification, object: nil, queue: .main
+            ) { [weak self] notification in
+                guard let self, let split = notification.object as? NSSplitView,
+                      split.window === self.window else { return }
+                self.scheduleUpdate()
+            })
+            scheduleUpdate()
+        }
+
+        override func layout() {
+            super.layout()
+            scheduleUpdate()
+        }
+
+        deinit {
+            observers.forEach(NotificationCenter.default.removeObserver)
+        }
+
+        func scheduleUpdate() {
+            guard !updatePending else { return }
+            updatePending = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updatePending = false
+                guard let toolbar = self.window?.toolbar, self.bounds.width > 0,
+                      let title = toolbar.items.first(where: { $0.itemIdentifier.rawValue == "list.title" })?.view,
+                      let add = toolbar.items.first(where: { $0.itemIdentifier.rawValue == "list.add" })?.view,
+                      title.window === self.window, add.window === self.window else { return }
+                let trailingEdge = self.convert(self.bounds, to: nil).maxX - KeeTheme.Spacing.small
+                let addTrailingEdge = add.convert(add.bounds, to: nil).maxX
+                let width = max(1, title.bounds.width + trailingEdge - addTrailingEdge)
+                if let lastWidth = self.lastWidth, abs(width - lastWidth) < 0.5 {
+                    return
+                }
+                self.lastWidth = width
+                self.updateTitleWidth?(width)
+            }
+        }
+    }
 }
 
 private struct TitlebarSplitResizeMonitor: NSViewRepresentable {
