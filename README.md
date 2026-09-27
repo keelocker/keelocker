@@ -9,6 +9,8 @@ KeeLocker is a native macOS password manager interface prototype built with Swif
 
 The sort and add actions are standard SwiftUI toolbar items. macOS manages their shared background, sizing, hover and pressed states, including Liquid Glass on macOS 26 and newer.
 
+Search uses SwiftUI's native toolbar search field (`.searchable`), including system focus, clearing and Escape behavior.
+
 ## Run
 
 Open `KeeLocker.xcodeproj` in Xcode and run the `KeeLocker` scheme, or build from Terminal:

@@ -60,14 +60,14 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertTrue(sortButton.waitForExistence(timeout: 3))
         XCTAssertTrue(addButton.waitForExistence(timeout: 3))
         XCTAssertTrue(detailSplitter.waitForExistence(timeout: 3))
-        XCTAssertLessThan(sortButton.frame.maxX, addButton.frame.minX)
+        // Native menu and button accessibility hit areas can overlap slightly.
+        XCTAssertLessThan(sortButton.frame.midX, addButton.frame.midX)
         XCTAssertEqual(sortButton.frame.midY, addButton.frame.midY, accuracy: 1)
         XCTAssertLessThan(addButton.frame.maxX, detailSplitter.frame.minX)
-        assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter)
+        let trailingInset = assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter)
 
-        let divider = detailSplitter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        divider.press(forDuration: 0.1, thenDragTo: divider.withOffset(CGVector(dx: -50, dy: 0)))
-        assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter)
+        resizeColumn(using: detailSplitter)
+        assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter, expectedInset: trailingInset)
 
         addButton.hover()
         sortButton.hover()
@@ -81,6 +81,15 @@ final class ToolbarHoverUITests: XCTestCase {
         let titleOrder = app.menuItems["Title"]
         XCTAssertTrue(titleOrder.waitForExistence(timeout: 2))
         titleOrder.click()
+        let airFrance = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Air France,")).firstMatch
+        let appleID = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Apple ID,")).firstMatch
+        let alphabeticalOrder = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                airFrance.exists && appleID.exists && airFrance.frame.minY < appleID.frame.minY
+            },
+            object: nil
+        )
+        XCTAssertEqual(XCTWaiter().wait(for: [alphabeticalOrder], timeout: 2), .completed)
 
         addButton.click()
         XCTAssertTrue(app.staticTexts["10 logins"].waitForExistence(timeout: 2))
@@ -124,15 +133,11 @@ final class ToolbarHoverUITests: XCTestCase {
 
         let detailSplitter = app.splitters.firstMatch
         XCTAssertTrue(detailSplitter.waitForExistence(timeout: 3))
-        assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter)
-        let divider = detailSplitter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        divider.press(
-            forDuration: 0.1,
-            thenDragTo: divider.withOffset(CGVector(dx: -80, dy: 0))
-        )
+        let trailingInset = assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter)
+        resizeColumn(using: detailSplitter)
         XCTAssertGreaterThan(sortButton.frame.minX, listTitle.frame.maxX)
         XCTAssertLessThan(app.toolbars.buttons["toolbar.add"].frame.maxX, detailSplitter.frame.minX)
-        assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter)
+        assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter, expectedInset: trailingInset)
 
         sidebarToggle.click()
 
@@ -143,22 +148,23 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertEqual(app.groups.matching(identifier: "toolbar.listTitle").count, 1)
         XCTAssertGreaterThan(expandedTitle.frame.minX, sidebarSplitter.frame.maxX)
         XCTAssertLessThan(expandedTitle.frame.maxX, sortButton.frame.minX)
-        assertActionsAlignToTrailingEdge(in: app, splitter: app.splitters.element(boundBy: 1))
+        assertActionsAlignToTrailingEdge(
+            in: app, splitter: app.splitters.element(boundBy: 1), expectedInset: trailingInset
+        )
     }
 
     func testToolbarSearchAlignsWithNativeActions() {
         let app = XCUIApplication()
         app.launch()
 
-        let searchContainer = app.groups["toolbar.searchContainer"]
+        let searchField = app.toolbars.searchFields.firstMatch
         let addButton = app.toolbars.buttons["toolbar.add"]
         let detailSplitter = app.splitters.element(boundBy: 1)
-        XCTAssertTrue(searchContainer.waitForExistence(timeout: 3))
+        XCTAssertTrue(searchField.waitForExistence(timeout: 3))
         XCTAssertTrue(addButton.waitForExistence(timeout: 3))
         XCTAssertTrue(detailSplitter.waitForExistence(timeout: 3))
-        XCTAssertEqual(searchContainer.frame.height, 40, accuracy: 0.5)
-        XCTAssertEqual(searchContainer.frame.midY, addButton.frame.midY, accuracy: 1)
-        XCTAssertGreaterThan(searchContainer.frame.minX, detailSplitter.frame.maxX)
+        XCTAssertEqual(searchField.frame.midY, addButton.frame.midY, accuracy: 1)
+        XCTAssertGreaterThan(searchField.frame.minX, detailSplitter.frame.maxX)
     }
 
     func testDraggingListDividerInTitlebarResizesColumnWithoutMovingWindow() {
@@ -216,10 +222,9 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDividerClickClearsSearchFocus() {
         let app = XCUIApplication()
-        app.launchEnvironment["KEELOCKER_UI_TESTING"] = "1"
         app.launch()
 
-        let searchField = app.descendants(matching: .any)["toolbar.search"]
+        let searchField = app.toolbars.searchFields.firstMatch
         let listTitle = app.groups["toolbar.listTitle"]
         let splitter = app.splitters.element(boundBy: 1)
         XCTAssertTrue(searchField.waitForExistence(timeout: 3))
@@ -227,7 +232,8 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertTrue(splitter.waitForExistence(timeout: 3))
 
         searchField.click()
-        XCTAssertTrue(waitForFocusState("focused", on: searchField))
+        app.typeText("151")
+        XCTAssertTrue(waitForValue("151", on: searchField))
 
         let window = app.windows.firstMatch
         let divider = window.coordinate(withNormalizedOffset: .zero).withOffset(
@@ -239,7 +245,8 @@ final class ToolbarHoverUITests: XCTestCase {
         divider.hover()
         divider.click()
 
-        XCTAssertTrue(waitForFocusState("idle", on: searchField))
+        app.typeText("x")
+        XCTAssertTrue(waitForValue("151", on: searchField))
     }
 
     func testWindowCanMoveAfterDividerHitsMaximumWidth() {
@@ -302,48 +309,47 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertGreaterThan(splitter.frame.midX, originalDividerX + 10)
     }
 
-    func testToolbarSearchReleasesFocusAfterOutsideClick() {
+    func testNativeToolbarSearchClearAndEscape() {
         let app = XCUIApplication()
-        app.launchEnvironment["KEELOCKER_UI_TESTING"] = "1"
         app.launch()
 
-        let searchField = app.descendants(matching: .any)["toolbar.search"]
-        let searchContainer = app.groups["toolbar.searchContainer"]
+        let searchField = app.toolbars.searchFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 3))
-        XCTAssertTrue(searchContainer.waitForExistence(timeout: 3))
+        searchField.click()
+        app.typeText("151")
+        XCTAssertTrue(app.staticTexts["1 login"].waitForExistence(timeout: 2))
+
+        let clearButton = searchField.buttons["cancel"]
+        XCTAssertTrue(clearButton.waitForExistence(timeout: 2))
+        clearButton.click()
+        XCTAssertTrue(waitForValue("", on: searchField))
+        XCTAssertTrue(app.staticTexts["9 logins"].waitForExistence(timeout: 2))
 
         searchField.click()
-        XCTAssertTrue(waitForFocusState("focused", on: searchField))
-
-        searchContainer
-            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 2))
-            .click()
-        XCTAssertTrue(waitForFocusState("idle", on: searchField))
-
-        searchField.click()
-        searchField.typeText("151")
-        XCTAssertTrue(waitForValue("focused|151", on: searchField))
-
-        searchContainer
-            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 2))
-            .click()
-        XCTAssertTrue(waitForFocusState("idle", on: searchField))
+        app.typeText("0000")
+        XCTAssertTrue(app.staticTexts["No matching logins"].waitForExistence(timeout: 2))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForValue("", on: searchField))
+        XCTAssertTrue(app.staticTexts["9 logins"].waitForExistence(timeout: 2))
+        app.typeText("x")
+        XCTAssertTrue(waitForValue("", on: searchField))
     }
 
     func testToolbarSearchKeepsFocusWhenFilteringHidesCurrentSelection() {
         let app = XCUIApplication()
-        app.launchEnvironment["KEELOCKER_UI_TESTING"] = "1"
         app.launch()
 
-        let searchField = app.descendants(matching: .any)["toolbar.search"]
+        let searchField = app.toolbars.searchFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 3))
 
         searchField.click()
-        searchField.typeText("151")
+        app.typeText("1")
+        XCTAssertTrue(waitForValue("1", on: searchField))
+        app.typeText("51")
 
-        let updatedSearchField = app.descendants(matching: .any)["toolbar.search"]
+        let updatedSearchField = app.toolbars.searchFields.firstMatch
         XCTAssertTrue(
-            waitForValue("focused|151", on: updatedSearchField),
+            waitForValue("151", on: updatedSearchField),
             "Actual search value: \(String(describing: updatedSearchField.value))"
         )
         XCTAssertTrue(app.staticTexts["1 login"].waitForExistence(timeout: 2))
@@ -352,56 +358,73 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarSearchKeepsFocusWhenFilteringHasNoResults() {
         let app = XCUIApplication()
-        app.launchEnvironment["KEELOCKER_UI_TESTING"] = "1"
         app.launch()
 
-        let searchField = app.descendants(matching: .any)["toolbar.search"]
+        let searchField = app.toolbars.searchFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 3))
 
         searchField.click()
-        searchField.typeText("0000")
+        app.typeText("000")
+        XCTAssertTrue(app.staticTexts["No matching logins"].waitForExistence(timeout: 2))
+        app.typeText("0")
 
-        let updatedSearchField = app.descendants(matching: .any)["toolbar.search"]
+        let updatedSearchField = app.toolbars.searchFields.firstMatch
         XCTAssertTrue(
-            waitForValue("focused|0000", on: updatedSearchField),
+            waitForValue("0000", on: updatedSearchField),
             "Actual search value: \(String(describing: updatedSearchField.value))"
         )
         XCTAssertTrue(app.staticTexts["No matching logins"].waitForExistence(timeout: 2))
     }
 
-    private func assertActionsAlignToTrailingEdge(
-        in app: XCUIApplication,
-        splitter: XCUIElement,
+    private func resizeColumn(
+        using splitter: XCUIElement,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
+        let initialX = splitter.frame.midX
+        let divider = splitter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        divider.press(forDuration: 0.1, thenDragTo: divider.withOffset(CGVector(dx: 60, dy: 0)))
+        // The restored column may already be at its maximum width.
+        if abs(splitter.frame.midX - initialX) <= 10 {
+            let currentDivider = splitter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            currentDivider.press(
+                forDuration: 0.1,
+                thenDragTo: currentDivider.withOffset(CGVector(dx: -60, dy: 0))
+            )
+        }
+        XCTAssertGreaterThan(abs(splitter.frame.midX - initialX), 10, file: file, line: line)
+    }
+
+    @discardableResult
+    private func assertActionsAlignToTrailingEdge(
+        in app: XCUIApplication,
+        splitter: XCUIElement,
+        expectedInset: CGFloat? = nil,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> CGFloat {
         let addButton = app.toolbars.buttons["toolbar.add"]
+        // AppKit's accessibility hit frame extends beyond the visible toolbar item.
+        // Check proximity to the divider, then preserve that inset across layout changes.
         let expectation = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
-                abs(splitter.frame.minX - addButton.frame.maxX - 8) <= 1.5
+                let inset = splitter.frame.minX - addButton.frame.maxX
+                if let expectedInset {
+                    return abs(inset - expectedInset) <= 1.5
+                }
+                return (0...16).contains(inset)
             },
             object: nil
         )
         XCTAssertEqual(
             XCTWaiter().wait(for: [expectation], timeout: 3),
             .completed,
-            "Toolbar actions must remain 8 pt from the list's trailing divider",
+            "Toolbar actions must stay at the list's trailing edge with a stable inset. "
+                + "Divider: \(splitter.frame), add: \(addButton.frame)",
             file: file,
             line: line
         )
-    }
-
-    private func waitForFocusState(
-        _ state: String,
-        on element: XCUIElement,
-        timeout: TimeInterval = 2
-    ) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value BEGINSWITH %@", "\(state)|"),
-            object: element
-        )
-
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+        return splitter.frame.minX - addButton.frame.maxX
     }
 
     private func waitForValue(

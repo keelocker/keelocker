@@ -23,7 +23,7 @@ The app uses the macOS system typeface so controls, localization and text metric
 - Sidebar rows: 38 pt high, 10 pt radius, transparent by default, subtle hover fill, accent-tinted selected fill.
 - Item rows: 72 pt minimum height, 10 pt radius, no separator cage, selected and hover states use surface fills.
 - Buttons: native label and icon construction, 9 pt radius for custom action buttons, 0.96 press scale in 120 ms unless Reduce Motion is enabled.
-- Inputs: native text behavior inside a quiet 34 pt search surface.
+- Toolbar: standard SwiftUI toolbar items for sort and add, with system sizing, hover and pressed states. Search uses `.searchable` in the toolbar with system focus and clearing behavior.
 - Credential groups: one grouped surface per semantic section, 14 pt radius, hairline separator only between rows.
 
 ## 5. Layout principles
@@ -32,15 +32,17 @@ The default window is 1180 by 760 pt. Sidebar width is 220 to 272 pt, item list 
 
 When the sidebar is hidden, the item list stays at least 336 pt wide so its title clears the window controls and list actions.
 
+Sort and add stay 8 pt from the item list's trailing divider as columns resize. Search stays at the trailing edge of the window toolbar.
+
 ## 6. Depth and elevation
 
-Depth comes from native background steps. Sidebar material is the only translucent plane. The item list is one luminance step away from the detail canvas; grouped credential fields are another step. Shadows are reserved for icon tiles and high-value controls.
+Depth comes from native background steps. The sidebar uses native material; toolbar controls use the system appearance, including Liquid Glass on macOS 26 and newer. The item list is one luminance step away from the detail canvas; grouped credential fields are another step. Shadows are reserved for icon tiles and high-value controls.
 
 ## 7. Do and do not
 
 - Do keep the sidebar airy and directly scannable.
 - Do use SF Symbols consistently.
-- Do preserve a 40 pt minimum hit target for toolbar and action controls.
+- Do let macOS size native toolbar controls and preserve a 40 pt minimum hit target for custom action controls.
 - Do use short, functional copy.
 - Do not turn every section into an elevated card.
 - Do not use gradients, ornamental glow, or thick selection rails.
