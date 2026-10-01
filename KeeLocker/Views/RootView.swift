@@ -1,8 +1,13 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
-    @StateObject private var store = VaultStore()
+    @StateObject private var store = ProcessInfo.processInfo.arguments.contains("--demo-vault")
+        ? VaultStore(items: MockVault.items)
+        : VaultStore(preferences: ProcessInfo.processInfo.arguments.contains("--ignore-last-vault") ? nil : .standard)
+    @State private var showsUnlock = false
+    @State private var didOfferInitialUnlock = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sortOrder: ItemSortOrder = .recent
     @State private var listToolbarTitleWidth: CGFloat?
@@ -10,7 +15,13 @@ struct RootView: View {
     var body: some View {
         Group {
             if store.isLocked {
-                LockedVaultView(onUnlock: store.unlock)
+                LockedVaultView(
+                    filename: store.fileURL?.lastPathComponent,
+                    hasVault: store.state != .noVault,
+                    onUnlock: requestUnlock,
+                    onOpen: openVault,
+                    onDemo: store.openDemo
+                )
             } else {
                 workspace
             }
@@ -19,19 +30,90 @@ struct RootView: View {
         .tint(KeeTheme.accent)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .focusedSceneValue(\.createVaultItem, createVaultItemAction)
+        .focusedSceneValue(\.createVaultGroup, createVaultGroupAction)
+        .focusedSceneValue(\.openVault, openVault)
+        .focusedSceneValue(\.saveVault, canSave ? { store.run(.save) } : nil)
+        .focusedSceneValue(\.saveVaultAs, canSave ? { VaultDialogs.saveAs(store) } : nil)
+        .background(VaultWindowGuard(store: store))
+        .overlay(alignment: .bottomTrailing) { if store.isBusy { ProgressView().controlSize(.small).padding() } }
+        .alert(store.operationFailure?.title ?? "", isPresented: Binding(get: { store.operationFailure != nil }, set: { if !$0 { store.operationFailure = nil } })) {
+            if store.operationFailure == .conflict {
+                Button("Save Copy…") {
+                    store.operationFailure = nil
+                    VaultDialogs.saveAs(store)
+                }
+                Button("Reload Latest", role: .destructive) {
+                    store.operationFailure = nil
+                    store.run(.reload)
+                }
+                Button("Cancel", role: .cancel) { store.operationFailure = nil }
+            } else {
+                Button("OK") { store.operationFailure = nil }
+            }
+        } message: { Text(store.operationFailure?.message ?? "") }
+        .task {
+            if !didOfferInitialUnlock {
+                didOfferInitialUnlock = true
+                if store.state == .locked, store.requiresPassword { showsUnlock = true }
+            }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                await store.refreshOTP()
+            }
+        }
+        .sheet(isPresented: $showsUnlock, onDismiss: {
+            if store.state != .unlocked { store.lock() }
+        }) {
+            UnlockVaultView(store: store) { showsUnlock = false }
+        }
+        .sheet(isPresented: Binding(get: { store.inspectedEntryID != nil }, set: { if !$0 { store.inspectedEntryID = nil } })) {
+            if let id = store.inspectedEntryID { EntryFilesAndHistory(store: store, id: id) }
+        }
+        .onChange(of: store.state) { _, state in
+            if state == .unlocked { showsUnlock = false }
+        }
+    }
+
+    private func requestUnlock() {
+        if store.requiresPassword { showsUnlock = true } else { store.unlock() }
+    }
+
+    private func openVault() {
+        guard VaultDialogs.mayLeave(store) else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "kdbx") ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.prompt = "Open Vault"
+        let session = store.sessionID
+        panel.begin { response in
+            guard response == .OK, let url = panel.url, store.sessionID == session,
+                  VaultDialogs.mayLeave(store) else { return }
+            store.openFile(url)
+            showsUnlock = true
+        }
     }
 
     private var createVaultItemAction: (() -> Void)? {
-        guard !store.isLocked else { return nil }
+        guard !store.isLocked, !store.isBusy, !store.hasDraft, store.capabilities.canCreate else { return nil }
         return { store.addItem() }
+    }
+
+    private var createVaultGroupAction: (() -> Void)? {
+        guard store.groupCreationParent != nil else { return nil }
+        return { VaultDialogs.newGroup(store) }
     }
 
     private var workspace: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(store: store)
+            SidebarView(store: store, onOpenVault: openVault)
+                .disabled(store.hasDraft)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 242, max: 272)
         } content: {
             ItemListView(store: store, sortOrder: $sortOrder)
+                .disabled(store.hasDraft)
                 .navigationSplitViewColumnWidth(
                     min: columnVisibility == .all ? 300 : 336,
                     ideal: 336,
@@ -50,7 +132,7 @@ struct RootView: View {
                             listTitle
                         }
                     }
-                    ToolbarActionGroup(sortOrder: $sortOrder, addAction: store.addItem)
+                    ToolbarActionGroup(sortOrder: $sortOrder, canCreate: store.capabilities.canCreate && !store.isBusy && !store.hasDraft, addAction: store.addItem)
                 }
         } detail: {
             detailColumn
@@ -58,7 +140,9 @@ struct RootView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .background(TitlebarSplitResizeMonitor())
-        .searchable(text: $store.searchQuery, placement: .toolbar, prompt: "Search")
+        .searchable(text: Binding(get: { store.searchQuery }, set: {
+            if !store.hasDraft && !store.isBusy { store.searchQuery = $0 }
+        }), placement: .toolbar, prompt: "Search")
     }
 
     private var listTitle: some View {
@@ -80,20 +164,44 @@ struct RootView: View {
 
     @ViewBuilder
     private var detailColumn: some View {
-        if let selectedID = store.selectedItemID,
+        if let draft = store.newItemDraft {
+            ItemDetailView(
+                item: .constant(draft),
+                canEdit: store.capabilities.canCreate && !store.isBusy,
+                canFavorite: store.capabilities.canFavorite,
+                hasDraft: $store.hasDraft,
+                isNew: true,
+                onSave: { item in await store.saveItem(item) },
+                onCancel: store.cancelNewItem
+            )
+            .id(draft.id)
+            .disabled(store.isBusy)
+        } else if let selectedID = store.selectedItemID,
            store.visibleItems.contains(where: { $0.id == selectedID }),
-           let index = store.items.firstIndex(where: { $0.id == selectedID }) {
+           store.items.contains(where: { $0.id == selectedID }) {
             ItemDetailView(
                 item: Binding(
-                    get: { store.items[index] },
+                    get: { store.selectedEntry ?? store.items.first { $0.id == selectedID } ?? .empty },
                     set: store.updateItem
-                )
+                ),
+                canEdit: store.capabilities.canEdit && store.selectedEntry != nil && !store.isBusy,
+                canFavorite: store.capabilities.canFavorite,
+                hasDraft: $store.hasDraft,
+                onSave: { item in await store.saveItem(item) },
+                onBeginEditing: { !store.isBusy && !store.isLocked && store.selectedEntry != nil }
             )
             .id(selectedID)
+            .id(store.editorGeneration)
+            .disabled(store.isBusy)
+            .contextMenu {
+                if let item = store.items.first(where: { $0.id == selectedID }) { EntryCommands(store: store, item: item) }
+            }
         } else {
             EmptyDetailView()
         }
     }
+
+    private var canSave: Bool { !store.isLocked && !store.isBusy && !store.hasDraft && store.capabilities.canSave }
 }
 
 private extension View {
@@ -393,7 +501,11 @@ private struct TitlebarSplitResizeMonitor: NSViewRepresentable {
 }
 
 private struct LockedVaultView: View {
+    let filename: String?
+    let hasVault: Bool
     let onUnlock: () -> Void
+    let onOpen: () -> Void
+    let onDemo: () -> Void
 
     var body: some View {
         ZStack {
@@ -413,16 +525,16 @@ private struct LockedVaultView: View {
                 }
 
                 VStack(spacing: KeeTheme.Spacing.small) {
-                    Text("KeeLocker is locked")
+                    Text(hasVault ? "KeeLocker is locked" : "Open a vault")
                         .font(.system(size: 28, weight: .semibold))
                         .tracking(-0.35)
-                    Text("Your in-memory vault is ready when you are.")
+                    Text(filename ?? "Open a KeePass database to get started.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
 
-                Button(action: onUnlock) {
-                    Label("Unlock vault", systemImage: "lock.open.fill")
+                Button(action: hasVault ? onUnlock : onOpen) {
+                    Label(hasVault ? "Unlock vault" : "Open Vault…", systemImage: "lock.open.fill")
                         .fontWeight(.semibold)
                         .padding(.horizontal, 18)
                         .frame(height: 38)
@@ -431,6 +543,11 @@ private struct LockedVaultView: View {
                 }
                 .buttonStyle(PressableButtonStyle())
                 .keyboardShortcut(.defaultAction)
+                if hasVault {
+                    Button("Open another vault…", action: onOpen)
+                } else {
+                    Button("Open demo vault", action: onDemo)
+                }
             }
         }
     }

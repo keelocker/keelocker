@@ -2,7 +2,9 @@ import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var store: VaultStore
+    let onOpenVault: () -> Void
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsVaultSwitcher = false
 
     var body: some View {
@@ -40,17 +42,15 @@ struct SidebarView: View {
                         }
 
                         sidebarSection(title: "Groups") {
-                            ForEach(VaultGroup.allCases) { group in
-                                SidebarRow(
-                                    title: group.rawValue,
-                                    iconName: group.iconName,
-                                    count: store.count(in: group),
-                                    isSelected: store.sidebarSelection == .group(group)
-                                ) {
-                                    store.navigate(to: .group(group))
-                                }
+                            ForEach(store.visibleGroupRows) { row in
+                                groupRow(row)
+                                    .transition(reduceMotion ? .identity : .opacity.combined(with: .offset(y: -4)))
                             }
                         }
+                        .animation(
+                            reduceMotion || store.isLocked ? nil : KeeTheme.Motion.groupExpansion,
+                            value: store.collapsedGroupIDs
+                        )
                     }
                     .padding(.horizontal, 10)
                     .padding(.bottom, 16)
@@ -69,23 +69,61 @@ struct SidebarView: View {
                         iconName: "lock",
                         roleColor: .secondary
                     ) {
-                        store.lock()
+                        if VaultDialogs.mayLeave(store) { store.lock() }
                     }
                 }
                 .padding(10)
             }
         }
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("New Group…") { VaultDialogs.newGroup(store, atRoot: true) }
+                .disabled(store.rootGroupCreationParent == nil)
+        }
+    }
+
+    private func groupRow(_ row: VaultGroupTreeRow) -> some View {
+        let group = row.group
+        let selected: Bool = {
+            if case let .group(current) = store.sidebarSelection { return current.id == group.id }
+            return false
+        }()
+        let indentation = CGFloat(row.depth) * 16
+        return SidebarRow(title: group.name, iconName: group.iconName,
+                          count: store.count(in: group), isSelected: selected,
+                          leadingInset: 18 + indentation) {
+            store.navigate(to: .group(group))
+        }
+        .accessibilityIdentifier("sidebar.group.\(group.id.uuidString)")
+        .help(group.path)
+        .overlay(alignment: .leading) {
+            if row.hasChildren {
+                Button { store.toggleGroupExpansion(group.id) } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(selected ? KeeTheme.accent : Color.secondary)
+                        .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
+                        .frame(width: 18, height: 38)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .padding(.leading, 10 + indentation)
+                .accessibilityLabel("\(row.isExpanded ? "Collapse" : "Expand") \(group.name)")
+                .accessibilityIdentifier("sidebar.disclosure.\(group.id.uuidString)")
+            }
+        }
+        .contextMenu { GroupCommands(store: store, group: group) }
     }
 
     private var vaultMenu: some View {
         Button {
             showsVaultSwitcher.toggle()
         } label: {
-            Text("Personal Vault")
+            Text(store.vaultName)
         }
         .buttonStyle(VaultSwitcherButtonStyle())
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel("Current vault: Personal Vault")
+        .accessibilityLabel("Current vault: \(store.vaultName)")
         .popover(isPresented: $showsVaultSwitcher, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Vaults")
@@ -99,9 +137,9 @@ struct SidebarView: View {
                     HStack(spacing: 10) {
                         VaultIcon(size: 34)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Personal Vault")
+                            Text(store.vaultName)
                                 .font(.system(size: 13, weight: .semibold))
-                            Text("\(store.items.count) items · Local mock vault")
+                            Text("\(store.items.count) items · \(store.capabilities.canEdit ? (store.fileURL == nil ? "In-memory vault" : "Local file") : "Read-only")")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -119,6 +157,11 @@ struct SidebarView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PressableButtonStyle())
+
+                Button("Open Vault…") {
+                    showsVaultSwitcher = false
+                    onOpenVault()
+                }
             }
             .padding(12)
             .frame(width: 270)
@@ -163,7 +206,7 @@ private struct VaultSwitcherButtonStyle: ButtonStyle {
         HStack(spacing: 12) {
             VaultIcon(size: 44)
 
-            Text("Personal Vault")
+            configuration.label
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
@@ -191,6 +234,7 @@ private struct SidebarRow: View {
     let iconName: String
     let count: Int
     let isSelected: Bool
+    var leadingInset: CGFloat = 0
     let action: () -> Void
 
     @State private var isHovered = false
@@ -204,6 +248,7 @@ private struct SidebarRow: View {
                     .frame(width: 18)
                 Text(title)
                     .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
+                    .lineLimit(1)
                 Spacer()
                 Text(count.formatted())
                     .font(.caption.monospacedDigit())
@@ -214,7 +259,8 @@ private struct SidebarRow: View {
                     )
             }
             .foregroundStyle(isSelected ? KeeTheme.accent : Color.primary)
-            .padding(.horizontal, 10)
+            .padding(.leading, 10 + leadingInset)
+            .padding(.trailing, 10)
             .frame(maxWidth: .infinity, minHeight: 38)
             .background {
                 RoundedRectangle(cornerRadius: KeeTheme.Radius.row, style: .continuous)

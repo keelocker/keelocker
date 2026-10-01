@@ -28,6 +28,11 @@ enum KeeTheme {
     enum Toolbar {
         static let controlHeight: CGFloat = 40
     }
+
+    enum Motion {
+        // Keep repeated disclosure clicks responsive without a bounce or stagger.
+        static let groupExpansion = Animation.easeOut(duration: 0.15)
+    }
 }
 extension ItemColor {
     var color: Color {

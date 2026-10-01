@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KeePassFile>
+  <Meta>
+    <DatabaseName>Shared attachment regression</DatabaseName>
+    <Binaries>
+      <Binary ID="0" Compressed="False">YWxwaGE=</Binary>
+      <Binary ID="1" Compressed="False">YmV0YQ==</Binary>
+    </Binaries>
+  </Meta>
+  <Root><Group>
+    <UUID>AAAAAAAAAAAAAAAAAAAAAQ==</UUID><Name>Root</Name>
+    <Entry>
+      <UUID>AAAAAAAAAAAAAAAAAAAAAg==</UUID>
+      <String><Key>Title</Key><Value>A</Value></String>
+      <Binary><Key>a.bin</Key><Value Ref="0"/></Binary>
+      <Binary><Key>b.bin</Key><Value Ref="0"/></Binary>
+      <History><Entry>
+        <UUID>AAAAAAAAAAAAAAAAAAAAAg==</UUID>
+        <String><Key>Title</Key><Value>Historical A</Value></String>
+        <Binary><Key>old.bin</Key><Value Ref="1"/></Binary>
+      </Entry></History>
+    </Entry>
+    <Entry>
+      <UUID>AAAAAAAAAAAAAAAAAAAAAw==</UUID>
+      <String><Key>Title</Key><Value>B</Value></String>
+      <Binary><Key>shared.bin</Key><Value Ref="0"/></Binary>
+      <Binary><Key>beta.bin</Key><Value Ref="1"/></Binary>
+    </Entry>
+  </Group></Root>
+</KeePassFile>

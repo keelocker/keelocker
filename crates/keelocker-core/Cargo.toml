@@ -1,0 +1,28 @@
+[package]
+name = "keelocker-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[features]
+bindings = ["uniffi/cli"]
+
+[dependencies]
+keepass = { version = "=0.15.0", features = ["save_kdbx4", "totp", "serialization"] }
+uniffi = "=0.32.2"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+zeroize = "1"
+sha2 = "0.10"
+tempfile = "3"
+serde_json = "1"
+roxmltree = "0.21"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindings"]

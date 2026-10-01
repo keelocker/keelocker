@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<KeePassFile>
+  <Meta>
+    <Generator>KeeLocker test fixture</Generator>
+    <DatabaseName>KeeLocker Integration Vault</DatabaseName>
+    <MemoryProtection><ProtectPassword>True</ProtectPassword></MemoryProtection>
+  </Meta>
+  <Root><Group>
+    <UUID>AAAAAAAAAAAAAAAAAAAAAQ==</UUID><Name>Root is not the vault name</Name>
+    <Times><CreationTime>2024-01-02T03:04:05Z</CreationTime><LastModificationTime>2024-06-07T08:09:10Z</LastModificationTime></Times>
+    <Entry>
+      <UUID>AAAAAAAAAAAAAAAAAAAAAg==</UUID>
+      <Times><CreationTime>2024-01-02T03:04:05Z</CreationTime><LastModificationTime>2024-06-07T08:09:10Z</LastModificationTime></Times>
+      <String><Key>Title</Key><Value>Root login</Value></String>
+      <String><Key>UserName</Key><Value>root-user</Value></String>
+      <String><Key>Password</Key><Value ProtectInMemory="True">root-secret</Value></String>
+    </Entry>
+    <Group>
+      <UUID>AAAAAAAAAAAAAAAAAAAAAw==</UUID><Name>Work</Name>
+      <Group>
+        <UUID>AAAAAAAAAAAAAAAAAAAABA==</UUID><Name>Shared</Name>
+        <Entry>
+          <UUID>AAAAAAAAAAAAAAAAAAAABQ==</UUID>
+          <Times><CreationTime>2024-01-02T03:04:05Z</CreationTime><LastModificationTime>2024-06-07T08:09:10Z</LastModificationTime></Times>
+          <Tags>work;important;тест</Tags>
+          <String><Key>Title</Key><Value>GitHub тест 🔐</Value></String>
+          <String><Key>UserName</Key><Value>developer@example.test</Value></String>
+          <String><Key>Password</Key><Value ProtectInMemory="True">pässword-🔐-test</Value></String>
+          <String><Key>URL</Key><Value>https://example.test/login</Value></String>
+          <String><Key>Notes</Key><Value>First line&#10;Second line — заметка</Value></String>
+          <String><Key>Account ID</Key><Value>account-42</Value></String>
+          <String><Key>Recovery code</Key><Value ProtectInMemory="True">recovery-secret</Value></String>
+          <String><Key>otp</Key><Value ProtectInMemory="True">otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP&amp;issuer=Example</Value></String>
+        </Entry>
+      </Group>
+      <Group><UUID>AAAAAAAAAAAAAAAAAAAABg==</UUID><Name>Empty</Name></Group>
+    </Group>
+    <Group>
+      <UUID>AAAAAAAAAAAAAAAAAAAABw==</UUID><Name>Personal</Name>
+      <Group><UUID>AAAAAAAAAAAAAAAAAAAACA==</UUID><Name>Shared</Name></Group>
+    </Group>
+  </Group></Root>
+</KeePassFile>

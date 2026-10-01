@@ -3,6 +3,13 @@ import SwiftUI
 
 struct ItemDetailView: View {
     @Binding var item: VaultItem
+    let canEdit: Bool
+    let canFavorite: Bool
+    @Binding var hasDraft: Bool
+    let isNew: Bool
+    let onSave: ((VaultItem) async -> Bool)?
+    let onBeginEditing: (() -> Bool)?
+    let onCancel: (() -> Void)?
     @AppStorage("clearClipboard") private var clearsClipboard = true
 
     @State private var draft: VaultItem
@@ -10,10 +17,22 @@ struct ItemDetailView: View {
     @State private var showsPassword = false
     @State private var copiedValue: CopiedValue?
     @State private var copyFeedbackToken = UUID()
+    @FocusState private var titleHasFocus: Bool
 
-    init(item: Binding<VaultItem>) {
+    init(item: Binding<VaultItem>, canEdit: Bool = true, canFavorite: Bool = true,
+         hasDraft: Binding<Bool> = .constant(false), isNew: Bool = false,
+         onSave: ((VaultItem) async -> Bool)? = nil,
+         onBeginEditing: (() -> Bool)? = nil, onCancel: (() -> Void)? = nil) {
         _item = item
-        _draft = State(initialValue: item.wrappedValue)
+        self.canEdit = canEdit
+        self.canFavorite = canFavorite
+        _hasDraft = hasDraft
+        self.isNew = isNew
+        self.onSave = onSave
+        self.onBeginEditing = onBeginEditing
+        self.onCancel = onCancel
+        _draft = State(initialValue: isNew ? item.wrappedValue : .empty)
+        _isEditing = State(initialValue: isNew)
     }
 
     private var presentedItem: VaultItem {
@@ -37,6 +56,11 @@ struct ItemDetailView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(KeeTheme.canvas)
+        .onAppear { if isNew { titleHasFocus = true } }
+        .onDisappear {
+            draft = .empty
+            showsPassword = false
+        }
     }
 
     private var detailHeader: some View {
@@ -48,6 +72,9 @@ struct ItemDetailView: View {
                     TextField("Title", text: $draft.title)
                         .textFieldStyle(.plain)
                         .font(.system(size: 30, weight: .semibold))
+                        .lineLimit(1)
+                        .frame(height: 42, alignment: .leading)
+                        .focused($titleHasFocus)
                 } else {
                     Text(presentedItem.title)
                         .font(.system(size: 30, weight: .semibold))
@@ -82,6 +109,7 @@ struct ItemDetailView: View {
             }
             .buttonStyle(PressableButtonStyle())
             .help(presentedItem.isFavorite ? "Remove from favorites" : "Add to favorites")
+            .disabled(!canEdit || !canFavorite)
             .accessibilityLabel(presentedItem.isFavorite ? "Remove from favorites" : "Add to favorites")
         }
     }
@@ -113,8 +141,10 @@ struct ItemDetailView: View {
 
             if isEditing {
                 DetailActionButton(title: "Cancel", iconName: "xmark") {
-                    draft = item
+                    draft = .empty
                     isEditing = false
+                    if let onCancel { onCancel() }
+                    else { hasDraft = false }
                 }
             }
 
@@ -124,12 +154,28 @@ struct ItemDetailView: View {
             ) {
                 if isEditing {
                     draft.modifiedAt = .now
-                    item = draft
+                    if let onSave {
+                        Task {
+                            if await onSave(draft) {
+                                draft = .empty
+                                isEditing = false
+                                hasDraft = false
+                            }
+                        }
+                    } else {
+                        item = draft
+                        draft = .empty
+                        isEditing = false
+                        hasDraft = false
+                    }
                 } else {
+                    guard onBeginEditing?() ?? true else { return }
                     draft = item
+                    isEditing = true
+                    hasDraft = true
                 }
-                isEditing.toggle()
             }
+            .disabled(!canEdit)
         }
     }
 
@@ -205,7 +251,23 @@ struct ItemDetailView: View {
                 }
             }
 
-            if !presentedItem.customFields.isEmpty {
+            if isEditing {
+                DetailSection(title: "Custom fields") {
+                    VStack(spacing: 8) {
+                        ForEach($draft.customFields) { $field in
+                            HStack {
+                                TextField("Name", text: $field.name)
+                                if field.isSensitive { SecureField("Value", text: $field.value) }
+                                else { TextField("Value", text: $field.value) }
+                                Toggle("Protected", isOn: $field.isSensitive)
+                                Button(role: .destructive) { draft.customFields.removeAll { $0.id == field.id } } label: { Image(systemName: "minus.circle") }
+                            }
+                        }
+                        Button("Add Field") { draft.customFields.append(CustomField(name: "", value: "")) }
+                    }
+                    .padding(12)
+                }
+            } else if !presentedItem.customFields.isEmpty {
                 DetailSection(title: "Custom fields") {
                     ForEach(Array(presentedItem.customFields.enumerated()), id: \.element.id) { index, field in
                         CredentialRow(
@@ -248,7 +310,13 @@ struct ItemDetailView: View {
                     }
                 }
 
-                if !presentedItem.tags.isEmpty {
+                if isEditing {
+                    TextField("Tags (separated by semicolons)", text: Binding(
+                        get: { draft.tags.joined(separator: "; ") },
+                        set: { draft.tags = $0.split(separator: ";", omittingEmptySubsequences: false).map(String.init) }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                } else if !presentedItem.tags.isEmpty {
                     VStack(alignment: .leading, spacing: 9) {
                         Text("Tags")
                             .font(.system(size: 13, weight: .semibold))

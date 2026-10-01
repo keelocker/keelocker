@@ -1,0 +1,16 @@
+[workspace]
+members = ["crates/keelocker-core"]
+resolver = "2"
+
+[patch.crates-io]
+keepass = { path = "vendor/keepass" }
+
+[profile.release]
+lto = "thin"
+
+[profile.dev.package.keepass]
+opt-level = 2
+[profile.dev.package.rust-argon2]
+opt-level = 2
+[profile.dev.package.aes]
+opt-level = 2

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ToolbarActionGroup: ToolbarContent {
     @Binding var sortOrder: ItemSortOrder
+    var canCreate = true
     let addAction: () -> Void
 
     var body: some ToolbarContent {
@@ -35,6 +36,7 @@ struct ToolbarActionGroup: ToolbarContent {
             Label("New login", systemImage: "plus")
         }
         .help("New login (⌘N)")
+        .disabled(!canCreate)
         .accessibilityIdentifier("toolbar.add")
     }
 }

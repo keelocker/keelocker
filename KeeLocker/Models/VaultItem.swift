@@ -1,6 +1,6 @@
 import Foundation
 
-struct VaultItem: Identifiable, Hashable {
+struct VaultItem: Identifiable, Hashable, Sendable {
     let id: UUID
     var title: String
     var username: String
@@ -15,6 +15,11 @@ struct VaultItem: Identifiable, Hashable {
     var iconName: String
     var iconColor: ItemColor
     var modifiedAt: Date
+    var createdAt: Date?
+    var attachments: [AttachmentMetadata] = []
+    var historyCount: Int = 0
+    // List snapshots omit secrets and must never replace a complete entry.
+    var isRedacted = false
 
     init(
         id: UUID = UUID(),
@@ -30,7 +35,8 @@ struct VaultItem: Identifiable, Hashable {
         isFavorite: Bool = false,
         iconName: String,
         iconColor: ItemColor,
-        modifiedAt: Date
+        modifiedAt: Date,
+        createdAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -46,10 +52,11 @@ struct VaultItem: Identifiable, Hashable {
         self.iconName = iconName
         self.iconColor = iconColor
         self.modifiedAt = modifiedAt
+        self.createdAt = createdAt
     }
 }
 
-struct CustomField: Identifiable, Hashable {
+struct CustomField: Identifiable, Hashable, Sendable {
     let id: UUID
     var name: String
     var value: String
@@ -63,7 +70,7 @@ struct CustomField: Identifiable, Hashable {
     }
 }
 
-struct OneTimePassword: Hashable {
+struct OneTimePassword: Hashable, Sendable {
     var code: String
     var period: Int
 
@@ -73,6 +80,11 @@ struct OneTimePassword: Hashable {
 }
 
 extension VaultItem {
+    static var empty: VaultItem {
+        VaultItem(title: "", username: "", password: "", website: "", notes: "", tags: [],
+                  group: .personal, iconName: "key.fill", iconColor: .indigo, modifiedAt: .distantPast)
+    }
+
     var websiteURL: URL? {
         guard let components = URLComponents(string: website),
               let scheme = components.scheme?.lowercased(),
@@ -86,25 +98,25 @@ extension VaultItem {
     }
 }
 
-enum VaultGroup: String, CaseIterable, Identifiable, Hashable {
-    case personal = "Personal"
-    case work = "Work"
-    case finance = "Finance"
-    case travel = "Travel"
+struct VaultGroup: Identifiable, Hashable, Sendable {
+    let id: UUID
+    var name: String
+    var parentID: UUID?
+    var path: String
+    var iconName: String = "folder"
+    var createdAt: Date?
+    var modifiedAt: Date?
 
-    var id: String { rawValue }
+    var rawValue: String { path }
 
-    var iconName: String {
-        switch self {
-        case .personal: "person.crop.circle"
-        case .work: "briefcase"
-        case .finance: "creditcard"
-        case .travel: "airplane"
-        }
-    }
+    static let personal = VaultGroup(id: UUID(), name: "Personal", path: "Personal", iconName: "person.crop.circle")
+    static let work = VaultGroup(id: UUID(), name: "Work", path: "Work", iconName: "briefcase")
+    static let finance = VaultGroup(id: UUID(), name: "Finance", path: "Finance", iconName: "creditcard")
+    static let travel = VaultGroup(id: UUID(), name: "Travel", path: "Travel", iconName: "airplane")
+    static let sampleGroups = [personal, work, finance, travel]
 }
 
-enum ItemColor: String, Hashable {
+enum ItemColor: String, Hashable, Sendable {
     case indigo
     case blue
     case cyan
@@ -120,6 +132,49 @@ enum SidebarSelection: Hashable {
     case allItems
     case favorites
     case group(VaultGroup)
+}
+
+struct VaultGroupTreeRow: Identifiable {
+    let group: VaultGroup
+    let depth: Int
+    let hasChildren: Bool
+    let isExpanded: Bool
+    var id: UUID { group.id }
+}
+
+enum VaultGroupTree {
+    static func rows(_ groups: [VaultGroup], collapsed: Set<UUID>) -> [VaultGroupTreeRow] {
+        let ids = Set(groups.map(\.id))
+        let children = Dictionary(grouping: groups) { group in
+            group.parentID.flatMap { ids.contains($0) ? $0 : nil }
+        }
+        var result: [VaultGroupTreeRow] = []
+        var visited: Set<UUID> = []
+        func append(_ group: VaultGroup, depth: Int) {
+            guard visited.insert(group.id).inserted else { return }
+            let descendants = children[group.id] ?? []
+            let expanded = !collapsed.contains(group.id)
+            result.append(VaultGroupTreeRow(group: group, depth: depth,
+                                            hasChildren: !descendants.isEmpty, isExpanded: expanded))
+            if expanded {
+                for child in descendants { append(child, depth: depth + 1) }
+            }
+        }
+        for root in children[nil] ?? [] { append(root, depth: 0) }
+        return result
+    }
+
+    static func ancestors(of id: UUID, in groups: [VaultGroup]) -> [UUID] {
+        let byID = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var visited: Set<UUID> = [id]
+        var result: [UUID] = []
+        var parent = byID[id]?.parentID
+        while let current = parent, let group = byID[current], visited.insert(current).inserted {
+            result.append(current)
+            parent = group.parentID
+        }
+        return result
+    }
 }
 
 enum AppearanceChoice: String, CaseIterable, Identifiable {

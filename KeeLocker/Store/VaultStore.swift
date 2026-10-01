@@ -2,15 +2,93 @@ import Foundation
 
 @MainActor
 final class VaultStore: ObservableObject {
-    @Published var items: [VaultItem]
-    @Published var selectedItemID: VaultItem.ID?
+    @Published private(set) var items: [VaultItem] = []
+    @Published var selectedItemID: VaultItem.ID? { didSet { if oldValue != selectedItemID { loadSelection() } } }
+    @Published private(set) var selectedEntry: VaultEntry?
+    @Published private(set) var newItemDraft: VaultEntry?
+    @Published private(set) var isBusy = false
+    @Published private(set) var isDirty = false
+    @Published var operationFailure: VaultFailure?
+    private(set) var lastCommandApplied = false
+    @Published var hasDraft = false { didSet { if !hasDraft { refreshIfNeeded() } } }
+    @Published var inspectedEntryID: UUID? { didSet { if inspectedEntryID == nil { refreshIfNeeded() } } }
+    @Published private(set) var editorGeneration = UUID()
     @Published var sidebarSelection: SidebarSelection = .allItems
     @Published var searchQuery = ""
-    @Published var isLocked = false
+    @Published private(set) var state: VaultState = .noVault
+    @Published private(set) var groups: [VaultGroup] = []
+    @Published private(set) var collapsedGroupIDs: Set<UUID> = []
+    @Published private(set) var vaultName = "KeeLocker"
+    @Published private(set) var fileURL: URL?
+    @Published private(set) var capabilities: VaultCapabilities = .readOnly
+    private var repository: (any VaultRepository)?
+    private var unlockTask: Task<Void, Never>?
+    private var generation = UUID()
+    private var operationTask: Task<Void, Never>?
+    private var selectionTask: Task<Void, Never>?
+    private var selectionGeneration = UUID()
+    private var preferences: UserDefaults?
+    private var fileMonitor: VaultFileMonitor?
+    private var monitoredURL: URL?
+    private var refreshTask: Task<Void, Never>?
+    private var refreshPending = false
+    private var lastRefreshFailure: VaultFailure?
+    private var selectionBeforeNewItem: UUID?
 
-    init(items: [VaultItem] = MockVault.items) {
-        self.items = items
-        self.selectedItemID = items.first?.id
+    init(preferences: UserDefaults? = nil) {
+        self.preferences = preferences
+        if let path = preferences?.string(forKey: "lastVaultPath"), !path.isEmpty {
+            openFile(URL(fileURLWithPath: path))
+        }
+    }
+
+    deinit { unlockTask?.cancel(); refreshTask?.cancel() }
+
+    init(items: [VaultItem]) {
+        let memory = MemoryVaultRepository(items: items)
+        repository = memory
+        capabilities = memory.capabilities
+        apply(memory.vault)
+    }
+
+    var isLocked: Bool { state != .unlocked }
+    var sessionID: UUID { generation }
+    var requiresPassword: Bool { repository?.requiresPassword ?? false }
+    var groupCreationParent: VaultGroup? {
+        guard let root = rootGroupCreationParent else { return nil }
+        if case let .group(selected) = sidebarSelection {
+            return groups.first { $0.id == selected.id }
+        }
+        return root
+    }
+    var rootGroupCreationParent: VaultGroup? {
+        guard !isLocked, !isBusy, !hasDraft, capabilities.canCreate else { return nil }
+        return groups.first { $0.parentID == nil }
+    }
+    var visibleGroupRows: [VaultGroupTreeRow] {
+        VaultGroupTree.rows(groups, collapsed: collapsedGroupIDs)
+    }
+    var failure: VaultFailure? {
+        if case let .error(failure) = state { return failure }
+        return nil
+    }
+
+    func openFile(_ url: URL) {
+        use(RustVaultRepository(url: url), fileURL: url)
+        preferences?.set(url.path, forKey: "lastVaultPath")
+    }
+
+    func use(_ repository: any VaultRepository, fileURL: URL? = nil) {
+        lock()
+        self.repository = repository
+        self.fileURL = fileURL
+        capabilities = repository.capabilities
+        state = .locked
+    }
+
+    func openDemo() {
+        use(MemoryVaultRepository())
+        unlock()
     }
 
     var visibleItems: [VaultItem] {
@@ -32,7 +110,8 @@ final class VaultStore: ObservableObject {
 
         let query = trimmedQuery.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
         return scopedItems.filter { item in
-            [item.title, item.username, item.website, item.group.rawValue]
+            ([item.title, item.username, item.website, item.group.rawValue, item.notes]
+                + item.tags + item.customFields.filter { !$0.isSensitive }.map(\.value))
                 .joined(separator: " ")
                 .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
                 .contains(query)
@@ -56,9 +135,24 @@ final class VaultStore: ObservableObject {
     }
 
     func navigate(to destination: SidebarSelection) {
+        if case let .group(group) = destination {
+            collapsedGroupIDs.subtract(VaultGroupTree.ancestors(of: group.id, in: groups))
+        }
         sidebarSelection = destination
         searchQuery = ""
         reconcileSelection()
+    }
+
+    func toggleGroupExpansion(_ id: UUID) {
+        guard !isLocked, !hasDraft, let group = groups.first(where: { $0.id == id }),
+              groups.contains(where: { $0.parentID == id }) else { return }
+        if collapsedGroupIDs.remove(id) == nil {
+            collapsedGroupIDs.insert(id)
+            if case let .group(selected) = sidebarSelection,
+               VaultGroupTree.ancestors(of: selected.id, in: groups).contains(id) {
+                navigate(to: .group(group))
+            }
+        }
     }
 
     func reconcileSelection() {
@@ -67,165 +161,276 @@ final class VaultStore: ObservableObject {
     }
 
     func updateItem(_ item: VaultItem) {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[index] = item
-        reconcileSelection()
+        guard capabilities.canEdit, !item.isRedacted else { return }
+        run(.updateEntry(item))
+    }
+
+    func saveItem(_ item: VaultItem) async -> Bool {
+        guard !isLocked, !isBusy, !item.isRedacted else { return false }
+        let creating = newItemDraft?.id == item.id
+        guard newItemDraft == nil || creating,
+              creating ? capabilities.canCreate : capabilities.canEdit else { return false }
+        let request = generation
+        run(creating ? .createEntry(item) : .updateEntry(item), selectNew: creating)
+        await waitForOperation()
+        guard generation == request, lastCommandApplied else { return false }
+        return true
     }
 
     func addItem() {
-        guard !isLocked else { return }
+        guard let group = groupCreationParent else { return }
 
-        let item = VaultItem(
+        selectionBeforeNewItem = selectedItemID
+        newItemDraft = VaultItem(
             title: "New login",
             username: "",
             password: "",
-            website: "https://",
+            website: "",
             notes: "",
             tags: [],
-            group: .personal,
+            group: group,
+            isFavorite: sidebarSelection == .favorites,
             iconName: "key.fill",
             iconColor: .indigo,
-            modifiedAt: .now
+            modifiedAt: .now,
+            createdAt: .now
         )
-        items.insert(item, at: 0)
-        sidebarSelection = .allItems
-        searchQuery = ""
-        selectedItemID = item.id
+        hasDraft = true
+        selectedItemID = nil
+    }
+
+    func cancelNewItem() {
+        guard !isBusy, newItemDraft != nil else { return }
+        newItemDraft = nil
+        selectedItemID = selectionBeforeNewItem
+        selectionBeforeNewItem = nil
+        reconcileSelection()
+        hasDraft = false
     }
 
     func lock() {
+        generation = UUID()
+        fileMonitor?.invalidate()
+        fileMonitor = nil
+        monitoredURL = nil
+        refreshPending = false
+        lastRefreshFailure = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        unlockTask?.cancel()
+        unlockTask = nil
+        repository?.lock()
+        operationTask?.cancel()
+        selectionTask?.cancel()
+        operationTask = nil
+        selectedEntry = nil
+        isBusy = false
+        isDirty = false
+        hasDraft = false
+        inspectedEntryID = nil
+        operationFailure = nil
+        lastCommandApplied = false
+        items = []
+        newItemDraft = nil
+        selectionBeforeNewItem = nil
+        groups = []
+        collapsedGroupIDs = []
+        selectedItemID = nil
+        sidebarSelection = .allItems
+        vaultName = "KeeLocker"
         searchQuery = ""
-        isLocked = true
+        state = repository == nil ? .noVault : .locked
     }
 
-    func unlock() {
-        isLocked = false
+    func unlock(password: String = "", keyFile: URL? = nil) {
+        guard isLocked, state != .unlocking, let repository else { return }
+        let request = UUID()
+        generation = request
+        state = .unlocking
+        unlockTask = Task { [weak self] in
+            do {
+                let vault = try await repository.load(password: password, keyFile: keyFile)
+                guard !Task.isCancelled, let self, self.generation == request else { return }
+                self.apply(vault)
+                self.unlockTask = nil
+            } catch {
+                guard !Task.isCancelled, let self, self.generation == request else { return }
+                self.state = .error((error as? VaultFailure) ?? .corruptedDatabase)
+                self.unlockTask = nil
+            }
+        }
+    }
+
+    func waitForUnlock() async {
+        await unlockTask?.value
+        await selectionTask?.value
+    }
+
+    func run(_ command: VaultCommand, selectNew: Bool = false, session: UUID? = nil) {
+        guard session == nil || session == generation,
+              !isLocked, !isBusy, let repository else { return }
+        let request = generation
+        let oldIDs = Set(items.map(\.id))
+        let oldGroupIDs = Set(groups.map(\.id))
+        isBusy = true
+        operationFailure = nil
+        lastCommandApplied = false
+        operationTask = Task { [weak self] in
+            do {
+                let result = try await repository.execute(command)
+                guard !Task.isCancelled, let self, self.generation == request else { return }
+                self.apply(result.vault)
+                if case .reload = command {
+                    self.newItemDraft = nil
+                    self.selectionBeforeNewItem = nil
+                    self.hasDraft = false
+                    self.editorGeneration = UUID()
+                    self.lastRefreshFailure = nil
+                }
+                self.lastCommandApplied = true
+                if case .createGroup = command,
+                   let created = result.vault.groups.first(where: { !oldGroupIDs.contains($0.id) }) {
+                    self.navigate(to: .group(created))
+                }
+                if selectNew {
+                    self.searchQuery = ""
+                    self.selectedItemID = result.vault.entries.first { !oldIDs.contains($0.id) }?.id
+                }
+                self.loadSelection()
+                await self.selectionTask?.value
+                guard !Task.isCancelled, self.generation == request else { return }
+                if case .createEntry(let draft) = command, self.newItemDraft?.id == draft.id {
+                    self.newItemDraft = nil
+                    self.selectionBeforeNewItem = nil
+                    self.hasDraft = false
+                }
+                self.operationFailure = result.saveFailure
+                self.isBusy = false
+                self.refreshIfNeeded()
+            } catch {
+                guard !Task.isCancelled, let self, self.generation == request else { return }
+                self.operationFailure = (error as? VaultFailure) ?? .invalidOperation
+                self.isBusy = false
+                self.refreshIfNeeded()
+            }
+        }
+    }
+
+    func waitForOperation() async {
+        await operationTask?.value
+        await waitForRefresh()
+    }
+    func waitForSelection() async { await selectionTask?.value }
+
+    func refreshFromDisk() {
+        guard !isLocked, repository != nil else { return }
+        refreshPending = true
+        refreshIfNeeded()
+    }
+
+    private func refreshIfNeeded() {
+        guard refreshPending, !isLocked, !isBusy, !isDirty, !hasDraft, inspectedEntryID == nil,
+              let repository else { return }
+        refreshPending = false
+        isBusy = true
+        let request = generation
+        refreshTask = Task { [weak self] in
+            do {
+                let vault = try await repository.refresh()
+                guard !Task.isCancelled, let self, self.generation == request else { return }
+                if let vault {
+                    self.apply(vault)
+                    self.loadSelection(clearingCurrent: false)
+                    await self.selectionTask?.value
+                }
+                self.lastRefreshFailure = nil
+            } catch {
+                guard !Task.isCancelled, let self, self.generation == request else { return }
+                let failure = (error as? VaultFailure) ?? .failedToReadFile
+                if self.lastRefreshFailure != failure {
+                    self.operationFailure = failure
+                    self.lastRefreshFailure = failure
+                }
+            }
+            guard let self, self.generation == request else { return }
+            self.refreshTask = nil
+            self.isBusy = false
+            self.refreshIfNeeded()
+        }
+    }
+
+    func waitForRefresh() async {
+        while let task = refreshTask { await task.value }
+        await selectionTask?.value
+    }
+
+    private func loadSelection(clearingCurrent: Bool = true) {
+        selectionTask?.cancel()
+        if clearingCurrent { selectedEntry = nil }
+        let selection = UUID()
+        selectionGeneration = selection
+        guard let id = selectedItemID, let repository, !isLocked else { return }
+        let request = generation
+        selectionTask = Task { [weak self] in
+            do {
+                let entry = try await repository.entry(id)
+                guard !Task.isCancelled, let self, self.generation == request,
+                      self.selectionGeneration == selection, self.selectedItemID == id else { return }
+                self.selectedEntry = entry
+            } catch {
+                guard !Task.isCancelled, let self, self.generation == request, self.selectionGeneration == selection else { return }
+                self.selectedEntry = nil
+                self.operationFailure = (error as? VaultFailure) ?? .invalidOperation
+            }
+        }
+    }
+
+    func refreshOTP() async {
+        guard let id = selectedItemID, selectedEntry?.oneTimePassword != nil, !isBusy, let repository else { return }
+        let request = generation
+        if let entry = try? await repository.entry(id), request == generation, selectedItemID == id {
+            selectedEntry?.oneTimePassword = entry.oneTimePassword
+        }
+    }
+
+    func history(_ id: UUID) async throws -> [VaultEntry] {
+        guard let repository, !isLocked else { throw VaultFailure.invalidOperation }
+        let request = generation
+        let result = try await repository.history(id)
+        guard request == generation else { throw CancellationError() }
+        return result
+    }
+
+    func attachment(_ id: UUID, name: String) async throws -> Data {
+        guard let repository, !isLocked else { throw VaultFailure.invalidOperation }
+        let request = generation
+        let result = try await repository.attachment(id, name: name)
+        guard request == generation else { throw CancellationError() }
+        return result
+    }
+
+    private func apply(_ vault: Vault) {
+        vaultName = vault.name
+        groups = vault.groups
+        collapsedGroupIDs.formIntersection(Set(vault.groups.map(\.id)))
+        items = vault.entries
+        isDirty = vault.isDirty
+        if let url = vault.fileURL {
+            fileURL = url
+            preferences?.set(url.path, forKey: "lastVaultPath")
+        }
+        state = .unlocked
+        if let fileURL, fileURL != monitoredURL {
+            fileMonitor?.invalidate()
+            monitoredURL = fileURL
+            fileMonitor = VaultFileMonitor(url: fileURL) { [weak self] in self?.refreshFromDisk() }
+        }
+        if case .group(let old) = sidebarSelection {
+            sidebarSelection = vault.groups.first(where: { $0.id == old.id }).map(SidebarSelection.group) ?? .allItems
+            if case let .group(selected) = sidebarSelection {
+                collapsedGroupIDs.subtract(VaultGroupTree.ancestors(of: selected.id, in: groups))
+            }
+        }
         reconcileSelection()
     }
-}
-
-enum MockVault {
-    static let items: [VaultItem] = [
-        VaultItem(
-            title: "Apple ID",
-            username: "mila.petrenko@icloud.com",
-            password: "harbor-lilac-orbit-47",
-            website: "https://appleid.apple.com",
-            notes: "Primary Apple account for App Store purchases and device backups.",
-            tags: ["personal", "important"],
-            customFields: [
-                CustomField(name: "Recovery key", value: "RK8M-29QF-L7PA-2G4V", isSensitive: true),
-                CustomField(name: "Support PIN", value: "8416", isSensitive: true)
-            ],
-            oneTimePassword: OneTimePassword(code: "482 731", period: 30),
-            group: .personal,
-            isFavorite: true,
-            iconName: "apple.logo",
-            iconColor: .graphite,
-            modifiedAt: .now.addingTimeInterval(-1_940)
-        ),
-        VaultItem(
-            title: "GitHub",
-            username: "mila-petrenko",
-            password: "quiet-signal-birch-992",
-            website: "https://github.com",
-            notes: "Development account. Recovery codes are stored in the secure archive.",
-            tags: ["work", "developer"],
-            customFields: [CustomField(name: "SSH key", value: "ed25519 · MBP 14", isSensitive: false)],
-            oneTimePassword: OneTimePassword(code: "091 426", period: 30),
-            group: .work,
-            isFavorite: true,
-            iconName: "chevron.left.forwardslash.chevron.right",
-            iconColor: .purple,
-            modifiedAt: .now.addingTimeInterval(-8_620)
-        ),
-        VaultItem(
-            title: "Figma",
-            username: "mila@northstar.studio",
-            password: "canvas-ember-moon-184",
-            website: "https://figma.com",
-            notes: "Northstar Studio workspace owner.",
-            tags: ["work", "design"],
-            group: .work,
-            iconName: "paintbrush.pointed.fill",
-            iconColor: .pink,
-            modifiedAt: .now.addingTimeInterval(-22_540)
-        ),
-        VaultItem(
-            title: "Notion",
-            username: "mila@northstar.studio",
-            password: "paper-crane-willow-603",
-            website: "https://notion.so",
-            notes: "Team wiki and project planning.",
-            tags: ["work", "docs"],
-            group: .work,
-            iconName: "doc.text.fill",
-            iconColor: .graphite,
-            modifiedAt: .now.addingTimeInterval(-76_000)
-        ),
-        VaultItem(
-            title: "Proton Mail",
-            username: "m.petrenko@proton.me",
-            password: "violet-cabin-snow-725",
-            website: "https://mail.proton.me",
-            notes: "Private email address for financial accounts.",
-            tags: ["personal", "email"],
-            oneTimePassword: OneTimePassword(code: "774 209", period: 30),
-            group: .personal,
-            isFavorite: true,
-            iconName: "envelope.fill",
-            iconColor: .indigo,
-            modifiedAt: .now.addingTimeInterval(-172_800)
-        ),
-        VaultItem(
-            title: "Raiffeisen Online",
-            username: "mpetrenko",
-            password: "river-gold-cedar-316",
-            website: "https://online.raiffeisen.ru",
-            notes: "Daily banking. Never share the confirmation code by phone.",
-            tags: ["finance", "bank"],
-            customFields: [CustomField(name: "Client ID", value: "184 206 731", isSensitive: true)],
-            group: .finance,
-            iconName: "building.columns.fill",
-            iconColor: .orange,
-            modifiedAt: .now.addingTimeInterval(-259_220)
-        ),
-        VaultItem(
-            title: "Wise",
-            username: "+49 151 7284 0613",
-            password: "spruce-market-wave-508",
-            website: "https://wise.com",
-            notes: "Travel card and international transfers.",
-            tags: ["finance", "travel"],
-            group: .finance,
-            iconName: "arrow.left.arrow.right",
-            iconColor: .green,
-            modifiedAt: .now.addingTimeInterval(-431_000)
-        ),
-        VaultItem(
-            title: "Air France",
-            username: "mila.petrenko@icloud.com",
-            password: "runway-sunrise-linen-637",
-            website: "https://wwws.airfrance.com",
-            notes: "Flying Blue account.",
-            tags: ["travel", "miles"],
-            customFields: [CustomField(name: "Flying Blue", value: "3084 726 193", isSensitive: false)],
-            group: .travel,
-            iconName: "airplane",
-            iconColor: .blue,
-            modifiedAt: .now.addingTimeInterval(-691_000)
-        ),
-        VaultItem(
-            title: "Booking.com",
-            username: "mila.petrenko@icloud.com",
-            password: "hotel-fern-lantern-289",
-            website: "https://booking.com",
-            notes: "Personal travel reservations.",
-            tags: ["travel"],
-            group: .travel,
-            iconName: "bed.double.fill",
-            iconColor: .cyan,
-            modifiedAt: .now.addingTimeInterval(-1_036_800)
-        )
-    ]
 }

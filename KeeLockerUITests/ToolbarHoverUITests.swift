@@ -2,12 +2,163 @@ import XCTest
 
 @MainActor
 final class ToolbarHoverUITests: XCTestCase {
+    func testKeePassXCExternalSaveUpdatesUIAndConflictReloadRecovers() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("live-sync.kdbx")
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("KeeLockerTests/Fixtures/interop.kdbx")
+        try FileManager.default.copyItem(at: fixture, to: path)
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--ignore-last-vault"]
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        let open = app.buttons["Open Vault…"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        open.click()
+        let choose = app.buttons["OKButton"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 3))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        let pathField = app.textFields["PathTextField"]
+        XCTAssertTrue(pathField.waitForExistence(timeout: 3))
+        pathField.click()
+        app.typeKey("a", modifierFlags: .command)
+        pathField.typeText(path.path)
+        app.typeKey(.return, modifierFlags: [])
+        choose.click()
+        let password = app.secureTextFields["Master Password"]
+        XCTAssertTrue(password.waitForExistence(timeout: 3))
+        password.click()
+        password.typeText("fixture-password")
+        app.buttons["Unlock"].click()
+        XCTAssertTrue(app.buttons["Current vault: KeeLocker Integration Vault"].waitForExistence(timeout: 15))
+        let search = app.toolbars.searchFields.firstMatch
+        search.click()
+        search.typeText("github")
+        let entry = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "GitHub тест 🔐,")).firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 3))
+        entry.click()
+        XCTAssertTrue(app.staticTexts["developer@example.test"].waitForExistence(timeout: 3))
+        search.click()
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey(.delete, modifierFlags: [])
+
+        try runKeePassXC(["edit", "-q", "-u", "xc-live-user", path.path, "Work/Shared/GitHub тест 🔐"])
+        XCTAssertTrue(app.staticTexts["xc-live-user"].waitForExistence(timeout: 10))
+        app.buttons["Edit"].click()
+        let title = app.textFields["Title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        title.click()
+        app.typeKey("a", modifierFlags: .command)
+        title.typeText("Native live sync")
+        app.buttons["Save"].click()
+        XCTAssertTrue(app.buttons["Edit"].waitForExistence(timeout: 10))
+        let saved = try runKeePassXC(["show", "-q", path.path, "Work/Shared/Native live sync"])
+        XCTAssertTrue(saved.contains("xc-live-user"))
+
+        app.buttons["Edit"].click()
+        title.click()
+        app.typeKey("a", modifierFlags: .command)
+        title.typeText("Local conflicting draft")
+        try runKeePassXC(["edit", "-q", "-u", "xc-second-user", path.path, "Work/Shared/Native live sync"])
+        app.buttons["Save"].click()
+        let reload = app.buttons["Reload Latest"]
+        XCTAssertTrue(reload.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Save Copy…"].exists)
+        let conflict = XCTAttachment(screenshot: app.screenshot())
+        conflict.name = "external-save-conflict-recovery"
+        conflict.lifetime = .keepAlways
+        add(conflict)
+        reload.click()
+        XCTAssertTrue(app.staticTexts["xc-second-user"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Edit"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Native live sync"].exists)
+        let refreshed = XCTAttachment(screenshot: app.screenshot())
+        refreshed.name = "external-save-reloaded"
+        refreshed.lifetime = .keepAlways
+        add(refreshed)
+    }
+
+    @discardableResult
+    private func runKeePassXC(_ arguments: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli")
+        process.arguments = arguments
+        let input = Pipe()
+        let output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        input.fileHandleForWriting.write(Data("fixture-password\n".utf8))
+        try input.fileHandleForWriting.close()
+        let bytes = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0, "KeePassXC fixture operation must succeed")
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    func testOpenRealVaultRetrySearchAndLock() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ignore-last-vault"]
+        app.launch()
+        app.activate()
+        let open = app.buttons["Open Vault…"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        open.click()
+        let choose = app.buttons["OKButton"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 3))
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        let pathField = app.textFields["PathTextField"]
+        XCTAssertTrue(pathField.waitForExistence(timeout: 3))
+        let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("KeeLockerTests/Fixtures/interop.kdbx").path
+        pathField.click()
+        app.typeKey("a", modifierFlags: .command)
+        pathField.typeText(path)
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(choose.waitForExistence(timeout: 3))
+        choose.click()
+        let password = app.secureTextFields["Master Password"]
+        XCTAssertTrue(password.waitForExistence(timeout: 3))
+        password.click()
+        app.typeText("wrong")
+        app.buttons["Unlock"].click()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Wrong password"))
+            .firstMatch.waitForExistence(timeout: 15))
+        password.click()
+        app.typeText("fixture-password")
+        app.buttons["Unlock"].click()
+        let vault = app.buttons["Current vault: KeeLocker Integration Vault"]
+        XCTAssertTrue(vault.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.toolbars.buttons["toolbar.add"].isEnabled)
+        let search = app.toolbars.searchFields.firstMatch
+        search.click()
+        app.typeText("github")
+        let entry = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "GitHub тест 🔐,")).firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 3))
+        entry.click()
+        XCTAssertTrue(app.staticTexts["developer@example.test"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Edit"].isEnabled)
+        app.buttons["Show"].click()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "pässword-🔐-test"))
+            .firstMatch.waitForExistence(timeout: 3))
+        app.buttons["Lock vault"].click()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "KeeLocker is locked"))
+            .firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["developer@example.test"].exists)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
 
     func testNativeToolbarActionsRespondToHover() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
         app.activate()
 
@@ -40,6 +191,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarDoesNotExposeHoverProbeToAccessibility() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let sortButton = app.menuButtons["toolbar.sort"]
@@ -52,6 +204,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarGeometryAndActions() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let sortButton = app.menuButtons["toolbar.sort"]
@@ -92,12 +245,17 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [alphabeticalOrder], timeout: 2), .completed)
 
         addButton.click()
+        XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["9 logins"].exists)
+        XCTAssertFalse(app.staticTexts["10 logins"].exists)
+        app.buttons["Save"].click()
         XCTAssertTrue(app.staticTexts["10 logins"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.staticTexts["New login"].waitForExistence(timeout: 2))
     }
 
     func testListTitleLivesInsideToolbar() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let listTitle = app.toolbars.groups["toolbar.listTitle"]
@@ -110,6 +268,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testListTitleClearsSidebarToggleWhenSidebarIsHidden() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let favoritesButton = app.buttons.matching(
@@ -155,6 +314,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarSearchAlignsWithNativeActions() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch
@@ -169,6 +329,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDraggingListDividerInTitlebarResizesColumnWithoutMovingWindow() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         assertTitlebarDividerResizesColumnWithoutMovingWindow(
@@ -198,6 +359,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDraggingListDividerInTitlebarWhenSidebarIsHidden() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let sidebarToggle = app.toolbars.buttons.firstMatch
@@ -212,6 +374,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDraggingSidebarDividerInTitlebarResizesColumnWithoutMovingWindow() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         assertTitlebarDividerResizesColumnWithoutMovingWindow(
@@ -222,6 +385,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDividerClickClearsSearchFocus() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch
@@ -251,6 +415,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testWindowCanMoveAfterDividerHitsMaximumWidth() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let window = app.windows.firstMatch
@@ -311,6 +476,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testNativeToolbarSearchClearAndEscape() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch
@@ -337,6 +503,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarSearchKeepsFocusWhenFilteringHidesCurrentSelection() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch
@@ -358,6 +525,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarSearchKeepsFocusWhenFilteringHasNoResults() {
         let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch

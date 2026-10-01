@@ -5,6 +5,7 @@ xcuserdata/
 # Local build output
 DerivedData/
 build/
+target/
 *.xccheckout
 
 # macOS metadata

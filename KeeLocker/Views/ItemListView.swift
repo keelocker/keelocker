@@ -31,6 +31,7 @@ struct ItemListView: View {
                                     store.selectedItemID = item.id
                                 }
                                 .id(item.id)
+                                .contextMenu { EntryCommands(store: store, item: item) }
                             }
                         }
                         .padding(8)
