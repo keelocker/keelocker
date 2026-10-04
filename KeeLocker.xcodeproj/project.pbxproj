@@ -28,6 +28,9 @@
 		AB0000000000000000000000 = {isa = PBXBuildFile; fileRef = BC0000000000000000000000; };
 		AB0000000000000000000001 = {isa = PBXBuildFile; fileRef = BC0000000000000000000001; };
 		AB0000000000000000000002 = {isa = PBXBuildFile; fileRef = BC0000000000000000000002; };
+		AD0000000000000000000000 = {isa = PBXBuildFile; fileRef = BD0000000000000000000000; };
+		AD0000000000000000000001 = {isa = PBXBuildFile; fileRef = BD0000000000000000000001; };
+		AD0000000000000000000002 = {isa = PBXBuildFile; fileRef = BD0000000000000000000002; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +77,9 @@
 		BC0000000000000000000000 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/Rust/RustVaultRepository.swift; sourceTree = SOURCE_ROOT; };
 		BC0000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/Rust/Generated/keelocker_core.swift; sourceTree = SOURCE_ROOT; };
 		BC0000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Views/VaultCommands.swift; sourceTree = SOURCE_ROOT; };
+		BD0000000000000000000000 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/SessionQuickUnlock.swift; sourceTree = SOURCE_ROOT; };
+		BD0000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/macOS/EnclaveQuickUnlockStorage.swift; sourceTree = SOURCE_ROOT; };
+		BD0000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickUnlockTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -119,6 +125,8 @@
 				BC0000000000000000000000,
 				BC0000000000000000000001,
 				BC0000000000000000000002,
+				BD0000000000000000000000,
+				BD0000000000000000000001,
 				BB0000000000000000000000,
 				BB0000000000000000000001,
 				BB0000000000000000000002,
@@ -186,6 +194,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000000000000000000001 /* VaultStoreTests.swift */,
+				BD0000000000000000000002,
 			);
 			path = KeeLockerTests;
 			sourceTree = "<group>";
@@ -338,6 +347,8 @@
 				AB0000000000000000000000,
 				AB0000000000000000000001,
 				AB0000000000000000000002,
+				AD0000000000000000000000,
+				AD0000000000000000000001,
 				AA0000000000000000000000,
 				AA0000000000000000000001,
 				AA0000000000000000000002,
@@ -363,6 +374,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A20000000000000000000001 /* VaultStoreTests.swift in Sources */,
+				AD0000000000000000000002,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -8,6 +8,14 @@ KeeLocker remembers the last selected file and offers to unlock it on the next
 launch. Only its path is saved in preferences; the master password is not saved.
 The editable in-memory demo remains available.
 
+On a Mac with Touch ID and Secure Enclave, Touch ID is prepared automatically
+after a successful master-password unlock. Confirm the native biometric prompt;
+cancelling it still opens the vault with the password. After Lock, choose
+**Unlock with Touch ID**. A full Quit or restart requires the master password again (and the key file
+if used). The session cache contains encrypted key material in memory only;
+Secure Enclave requires biometrics to recover it. No Apple Developer Team is
+needed for this local build. Details: [Session Quick Unlock](docs/touch-id.md).
+
 ## Build
 
 macOS 14+, Xcode 26+, and Rust installed through rustup. Verified toolchains:
@@ -47,7 +55,8 @@ its result; it cannot repopulate the closed session. Swift strings are not guara
 
 The upstream writer is experimental. The pinned MIT-licensed source in
 `vendor/keepass` includes parsing/reference fixes and compatibility guards;
-see `vendor/keepass/KEELOCKER-PATCH.md`. KeeLocker adds no cryptographic implementation.
+see `vendor/keepass/KEELOCKER-PATCH.md`. KDBX cryptography stays in that library;
+the optional session cache uses Apple's CryptoKit and biometric Secure Enclave keys.
 
 ## Supported behavior
 
@@ -136,7 +145,7 @@ edits. Delayed file-dialog and attachment actions are bound to their source sess
 
 Not implemented: new database creation, master-key changes, automatic merge,
 history restoration/pruning, recycle-bin UI, field-reference expansion, auto-type
-execution, icon editing, Touch ID, Keychain, cloud/sync, hardware keys. Twofish is
+execution, icon editing, Keychain, cloud/sync, hardware keys. Twofish is
 provided by the crate but outside the tested matrix. Hostile-file resource/KDF
 limits are not yet implemented. Authentication-header damage can be
 indistinguishable from wrong credentials; KDBX3 padding failure maps to that error.

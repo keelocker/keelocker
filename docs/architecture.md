@@ -42,6 +42,36 @@ The adapter persists favorites with the standard `KeeLocker:Favorite` tag and hi
 
 These are deliberate invariants covered by tests, not suggestions to simplify task handling.
 
+## Session Quick Unlock
+
+`VaultStore` accepts an optional `QuickUnlockService`. Production injects the
+process-wide `SessionQuickUnlock`; demo and ordinary store tests have none.
+Views receive availability and actions from the store. Native `LAContext` and
+Secure Enclave operations stay in `Data/macOS/EnclaveQuickUnlockStorage.swift`.
+
+After a successful password unlock on supported hardware, the Rust adapter automatically exports normalized
+pre-KDF key components. The service retains only authenticated ciphertext in RAM.
+Recovering its wrapping key requires a fresh biometric Secure Enclave operation;
+the adapter then reopens and verifies KDBX with the original library/KDF. Lock drops
+plaintext and the Rust session while retaining that encrypted cache. Quit clears
+the cache. No master password, normalized key or native record is written to
+preferences or Keychain. See [Touch ID contract](touch-id.md) for crypto and lifecycle details.
+
+Cancel/Lock/window closure/session replacement invalidates the originating native
+context and checks generation after each await. Invalidating a cache also cancels its
+pending requests. Unavailable hardware skips enrollment; enrollment failure leaves
+the successful password unlock intact. There is currently no enrollment preference
+or toggle on the unlock form.
+Changed credentials invalidate the cached material; Save As does not transfer
+registration to the new path.
+Enrollment captures a revision before password load, reserves before key export
+and is tied to the opened canonical path. Intervening invalidation rejects stale
+attempts. Biometric reopen rechecks the registration after KDBX opening and closes
+revoked sessions before publishing their data.
+Each unlocked store retains its registration token; failures from obsolete windows
+cannot invalidate newer registrations. Native request bookkeeping is released at
+completion even if cancellation happened outside the native operation.
+
 ## Drafts, mutations and persistence errors
 
 `VaultStore.addItem` creates an application draft in the selected group (or database root), preserving the sidebar scope. It does not call the repository. Cancel restores the prior selection and leaves the file untouched. A draft created from Favorites starts starred.

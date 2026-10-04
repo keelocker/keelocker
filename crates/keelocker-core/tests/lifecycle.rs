@@ -52,6 +52,142 @@ fn key() -> DatabaseKey {
 }
 
 #[test]
+fn session_key_material_reopens_and_saves_without_original_credentials() {
+    for id in [false, true] {
+        for chacha in [false, true] {
+            for minor in [0, 1] {
+                for keyfile in [false, true] {
+                    let dir = tempfile::tempdir().unwrap();
+                    let p = fixture(dir.path(), id, chacha, minor, keyfile);
+                    let key_path = dir.path().join("test.key");
+                    let v = CoreVault::open(
+                        path(&p),
+                        PASSWORD.into(),
+                        keyfile.then(|| path(&key_path)),
+                    )
+                    .unwrap();
+                    let before = v.snapshot().unwrap();
+                    let material = v.key_material().unwrap();
+                    assert_eq!(material.len(), if keyfile { 68 } else { 36 });
+                    v.lock();
+                    assert_eq!(v.key_material(), Err(CoreError::InvalidOperation));
+                    // The cached normalized key includes the key-file component for this session.
+                    let original_key = if keyfile {
+                        let k = key()
+                            .with_keyfile(&mut fs::File::open(&key_path).unwrap())
+                            .unwrap();
+                        fs::remove_file(&key_path).unwrap();
+                        k
+                    } else {
+                        key()
+                    };
+                    let quick = CoreVault::open_with_key_material(path(&p), material).unwrap();
+                    let restored = quick.snapshot().unwrap();
+                    assert_eq!(restored.info.root_id, before.info.root_id);
+                    assert_eq!(restored.entries.len(), before.entries.len());
+                    for original in &before.entries {
+                        assert!(restored
+                            .entries
+                            .iter()
+                            .any(|e| e.id == original.id && e.title == original.title));
+                    }
+                    let entry = quick
+                        .create_entry(before.info.root_id, edit("Quick Unlock edit"))
+                        .unwrap();
+                    quick.save().unwrap();
+                    let db = Database::parse(&fs::read(&p).unwrap(), original_key).unwrap();
+                    assert_eq!(
+                        db.entry(keepass::db::EntryId::from_uuid(entry.parse().unwrap()))
+                            .unwrap()
+                            .get_title(),
+                        Some("Quick Unlock edit")
+                    );
+                    quick.lock();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn session_key_material_rejects_malformed_and_wrong_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = fixture(dir.path(), true, false, 1, false);
+    for material in [
+        vec![],
+        vec![0; 36],
+        b"KLQ1".to_vec(),
+        [b"KLQ1".as_slice(), &[1; 33]].concat(),
+    ] {
+        assert!(matches!(
+            CoreVault::open_with_key_material(path(&p), material),
+            Err(CoreError::InvalidOperation)
+        ));
+    }
+    let v = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    let mut material = v.key_material().unwrap();
+    material[4] ^= 1;
+    assert!(matches!(
+        CoreVault::open_with_key_material(path(&p), material),
+        Err(CoreError::WrongCredentials)
+    ));
+}
+
+#[test]
+fn session_key_material_supports_legacy_aes_kdf_and_keyfile_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let legacy = dir.path().join("legacy.kdbx");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../KeeLockerTests/Fixtures/interop.kdbx"),
+        &legacy,
+    )
+    .unwrap();
+    let v = CoreVault::open(path(&legacy), "fixture-password".into(), None).unwrap();
+    let material = v.key_material().unwrap();
+    v.lock();
+    let quick = CoreVault::open_with_key_material(path(&legacy), material).unwrap();
+    quick.save().unwrap();
+    let db = Database::parse(
+        &fs::read(&legacy).unwrap(),
+        DatabaseKey::new().with_password("fixture-password"),
+    )
+    .unwrap();
+    assert!(matches!(db.config.kdf_config, KdfConfig::Aes { .. }));
+    assert!(!quick.snapshot().unwrap().entries.is_empty());
+    quick.lock();
+
+    let p = fixture(dir.path(), true, false, 1, false);
+    let mut db = Database::parse(&fs::read(&p).unwrap(), key()).unwrap();
+    db.config.kdf_config = KdfConfig::Aes { rounds: 10_000 };
+    let key_path = dir.path().join("only.key");
+    fs::write(&key_path, [17u8; 32]).unwrap();
+    let only_key = DatabaseKey::new()
+        .with_keyfile(&mut &[17u8; 32][..])
+        .unwrap();
+    db.save(&mut fs::File::create(&p).unwrap(), only_key.clone())
+        .unwrap();
+    let v = CoreVault::open(path(&p), String::new(), Some(path(&key_path))).unwrap();
+    let material = v.key_material().unwrap();
+    assert_eq!(material.len(), 36);
+    v.lock();
+    fs::remove_file(key_path).unwrap();
+    let quick = CoreVault::open_with_key_material(path(&p), material).unwrap();
+    let root = quick.snapshot().unwrap().info.root_id;
+    let entry = quick
+        .create_entry(root, edit("Key-file-only Quick Unlock"))
+        .unwrap();
+    quick.save().unwrap();
+    let db = Database::parse(&fs::read(&p).unwrap(), only_key).unwrap();
+    assert_eq!(
+        db.entry(keepass::db::EntryId::from_uuid(entry.parse().unwrap()))
+            .unwrap()
+            .get_title(),
+        Some("Key-file-only Quick Unlock")
+    );
+    quick.lock();
+}
+
+#[test]
 #[ignore = "manual release-mode performance profile"]
 fn operation_timing() {
     use std::time::Instant;
@@ -528,6 +664,10 @@ fn keepassxc_crypto_matrix_roundtrip() {
                     }
                     let v = CoreVault::open(ps, PASSWORD.into(), keyfile.then_some(ks.clone()))
                         .unwrap();
+                    let material = v.key_material().unwrap();
+                    v.lock();
+                    // KeePassXC independently verifies edits saved after a cached-key reopen.
+                    let v = CoreVault::open_with_key_material(path(&p), material).unwrap();
                     let s = v.snapshot().unwrap();
                     let e = s.entries.iter().find(|e| e.title == "XC created").unwrap();
                     assert_eq!(v.entry(e.id.clone()).unwrap().password, "xc-password");

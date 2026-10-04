@@ -47,3 +47,12 @@ The XML buffer is zeroizing; existing format parsers and ciphers are reused.
 validation. It exhaustively destructures Database so additions require updating
 the projection. Attachment bytes and protection flags are checked separately by
 the core, avoiding a temporary JSON array for every binary byte.
+
+`DatabaseKey::get_key_elements` exports the existing normalized credential
+components, and `from_key_elements` imports validated 32-byte components for
+session Quick Unlock. Imported elements use the same existing KDBX key composition,
+KDF and writer; this does not expose a caller-supplied post-KDF key. The new field
+is zeroized on drop and cleared when credentials are replaced. The core's versioned
+material accepts one or two components (password and/or key file), treats them as
+secrets, and never persists them outside the normal encrypted KDBX. Regression
+coverage: `session_key_material_*` in `lifecycle.rs`, plus Swift Quick Unlock tests.

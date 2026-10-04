@@ -38,6 +38,20 @@ struct UnlockVaultView: View {
             }
             .disabled(isUnlocking)
 
+            if store.canQuickUnlock {
+                Button { password = ""; store.unlockWithTouchID() } label: {
+                    Label("Unlock with Touch ID", systemImage: "touchid")
+                }
+                .disabled(isUnlocking)
+            }
+            if store.canEnableTouchID {
+                Text(store.canQuickUnlock
+                     ? "After quitting or restarting, enter your master password again."
+                     : "Touch ID will be enabled after unlocking and works until you quit KeeLocker.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if isUnlocking {
                 HStack {
                     ProgressView().controlSize(.small)
@@ -52,6 +66,10 @@ struct UnlockVaultView: View {
                 .font(.callout)
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+            if let failure = store.quickUnlockFailure {
+                Text(failure.message).font(.callout).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Spacer()
@@ -69,11 +87,15 @@ struct UnlockVaultView: View {
         .padding(24)
         .frame(width: 380)
         .interactiveDismissDisabled(isUnlocking)
-        .onAppear { passwordFocused = true }
+        .onAppear {
+            store.refreshQuickUnlockAvailability()
+            passwordFocused = true
+        }
         .onChange(of: passwordFocused) { _, focused in
             if focused { preferEnglishInputSource() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.refreshQuickUnlockAvailability()
             if passwordFocused { preferEnglishInputSource() }
         }
         .onDisappear {

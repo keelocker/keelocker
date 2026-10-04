@@ -258,6 +258,11 @@ void uniffi_keelocker_core_fn_free_corevault(uint64_t handle, RustCallStatus *_N
 uint64_t uniffi_keelocker_core_fn_constructor_corevault_open(RustBuffer path, RustBuffer password, RustBuffer key_file, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_CONSTRUCTOR_COREVAULT_OPEN_WITH_KEY_MATERIAL
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_CONSTRUCTOR_COREVAULT_OPEN_WITH_KEY_MATERIAL
+uint64_t uniffi_keelocker_core_fn_constructor_corevault_open_with_key_material(RustBuffer path, RustBuffer material, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_ATTACHMENT
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_ATTACHMENT
 RustBuffer uniffi_keelocker_core_fn_method_corevault_attachment(uint64_t ptr, RustBuffer entry, RustBuffer name, RustCallStatus *_Nonnull out_status
@@ -296,6 +301,11 @@ RustBuffer uniffi_keelocker_core_fn_method_corevault_entry(uint64_t ptr, RustBuf
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_HISTORY
 RustBuffer uniffi_keelocker_core_fn_method_corevault_history(uint64_t ptr, RustBuffer entry, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_KEY_MATERIAL
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_KEY_MATERIAL
+RustBuffer uniffi_keelocker_core_fn_method_corevault_key_material(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_LOCK
@@ -661,6 +671,12 @@ uint16_t uniffi_keelocker_core_checksum_method_corevault_history(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_KEY_MATERIAL
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_KEY_MATERIAL
+uint16_t uniffi_keelocker_core_checksum_method_corevault_key_material(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_LOCK
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_LOCK
 uint16_t uniffi_keelocker_core_checksum_method_corevault_lock(void
@@ -730,6 +746,12 @@ uint16_t uniffi_keelocker_core_checksum_method_corevault_update_entry(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_COREVAULT_OPEN
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_COREVAULT_OPEN
 uint16_t uniffi_keelocker_core_checksum_constructor_corevault_open(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_COREVAULT_OPEN_WITH_KEY_MATERIAL
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_COREVAULT_OPEN_WITH_KEY_MATERIAL
+uint16_t uniffi_keelocker_core_checksum_constructor_corevault_open_with_key_material(void
     
 );
 #endif

@@ -90,6 +90,25 @@ fn group_id(id: &str) -> Result<GroupId, CoreError> {
 }
 
 impl CoreVault {
+    fn open_key(path: String, key: DatabaseKey) -> Result<Arc<Self>, CoreError> {
+        let path = Path::new(&path)
+            .canonicalize()
+            .map_err(|_| CoreError::ReadFailed)?;
+        let (db, hash) = io::load(&path, &key)?;
+        let mut session = Session {
+            db,
+            key,
+            path,
+            hash,
+            dirty: false,
+            next_save: None,
+        };
+        session.prepare_next_save();
+        Ok(Arc::new(Self {
+            session: Mutex::new(Some(session)),
+        }))
+    }
+
     fn guard(&self) -> Result<MutexGuard<'_, Option<Session>>, CoreError> {
         self.session.lock().map_err(|_| CoreError::InvalidOperation)
     }
@@ -121,22 +140,46 @@ impl CoreVault {
                 .with_keyfile(&mut File::open(file).map_err(|_| CoreError::ReadFailed)?)
                 .map_err(|_| CoreError::ReadFailed)?;
         }
-        let path = Path::new(&path)
-            .canonicalize()
-            .map_err(|_| CoreError::ReadFailed)?;
-        let (db, hash) = io::load(&path, &key)?;
-        let mut session = Session {
-            db,
-            key,
-            path,
-            hash,
-            dirty: false,
-            next_save: None,
-        };
-        session.prepare_next_save();
-        Ok(Arc::new(Self {
-            session: Mutex::new(Some(session)),
-        }))
+        Self::open_key(path, key)
+    }
+
+    /// Reopen with normalized credential components, never a cached final KDF key.
+    #[uniffi::constructor]
+    pub fn open_with_key_material(path: String, material: Vec<u8>) -> Result<Arc<Self>, CoreError> {
+        let material = Zeroizing::new(material);
+        if !material.starts_with(b"KLQ1") || !matches!(material.len(), 36 | 68) {
+            return Err(CoreError::InvalidOperation);
+        }
+        let elements = material[4..]
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .map(|part| part.to_vec())
+            .collect();
+        let key =
+            DatabaseKey::from_key_elements(elements).map_err(|_| CoreError::InvalidOperation)?;
+        Self::open_key(path, key)
+    }
+
+    /// Secret, versioned pre-KDF components for the host's session-only quick unlock.
+    pub fn key_material(&self) -> Result<Vec<u8>, CoreError> {
+        self.with(|session| {
+            let elements = Zeroizing::new(
+                session
+                    .key
+                    .get_key_elements()
+                    .map_err(|_| CoreError::InvalidOperation)?,
+            );
+            if !matches!(elements.len(), 1 | 2) || elements.iter().any(|part| part.len() != 32) {
+                return Err(CoreError::InvalidOperation);
+            }
+            let mut material = Vec::with_capacity(4 + elements.len() * 32);
+            material.extend_from_slice(b"KLQ1");
+            for element in elements.iter() {
+                material.extend_from_slice(element);
+            }
+            Ok(material)
+        })
     }
 
     pub fn lock(&self) {

@@ -838,6 +838,9 @@ final class KdbxIntegrationTests: XCTestCase {
         store.openFile(copy)
         store.unlock(password: "fixture-password")
         await store.waitForUnlock()
+        // The fixture contains multiple entries; the initial HashMap order is not stable.
+        store.selectedItemID = try XCTUnwrap(store.items.first { $0.title.hasPrefix("GitHub") }?.id)
+        await store.waitForSelection()
         var edited = try XCTUnwrap(store.selectedEntry)
         edited.title = "Recovered unsaved edit"
 

@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 struct RootView: View {
     @StateObject private var store = ProcessInfo.processInfo.arguments.contains("--demo-vault")
         ? VaultStore(items: MockVault.items)
-        : VaultStore(preferences: ProcessInfo.processInfo.arguments.contains("--ignore-last-vault") ? nil : .standard)
+        : VaultStore(preferences: ProcessInfo.processInfo.arguments.contains("--ignore-last-vault") ? nil : .standard,
+                     quickUnlock: ProcessInfo.processInfo.arguments.contains("--disable-touch-id") ? nil : SessionQuickUnlock.shared)
     @State private var showsUnlock = false
     @State private var didOfferInitialUnlock = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -36,7 +37,9 @@ struct RootView: View {
         .focusedSceneValue(\.saveVaultAs, canSave ? { VaultDialogs.saveAs(store) } : nil)
         .background(VaultWindowGuard(store: store))
         .overlay(alignment: .bottomTrailing) { if store.isBusy { ProgressView().controlSize(.small).padding() } }
-        .alert(store.operationFailure?.title ?? "", isPresented: Binding(get: { store.operationFailure != nil }, set: { if !$0 { store.operationFailure = nil } })) {
+        .alert(store.operationFailure?.title ?? "Touch ID", isPresented: Binding(get: {
+            store.operationFailure != nil || (!store.isLocked && !showsUnlock && store.quickUnlockFailure != nil)
+        }, set: { if !$0 { store.operationFailure = nil; store.quickUnlockFailure = nil } })) {
             if store.operationFailure == .conflict {
                 Button("Save Copy…") {
                     store.operationFailure = nil
@@ -48,9 +51,9 @@ struct RootView: View {
                 }
                 Button("Cancel", role: .cancel) { store.operationFailure = nil }
             } else {
-                Button("OK") { store.operationFailure = nil }
+                Button("OK") { store.operationFailure = nil; store.quickUnlockFailure = nil }
             }
-        } message: { Text(store.operationFailure?.message ?? "") }
+        } message: { Text(store.operationFailure?.message ?? store.quickUnlockFailure?.message ?? "") }
         .task {
             if !didOfferInitialUnlock {
                 didOfferInitialUnlock = true

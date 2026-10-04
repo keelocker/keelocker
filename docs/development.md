@@ -18,6 +18,7 @@ Use the focused commands in `AGENTS.md` first, then add the checks warranted by 
 | Exported Rust API or DTO | Regenerate all UniFFI artifacts, build the app and run Swift bridge tests as well as Rust tests. |
 | UI interaction or hierarchy | Swift tests and focused UI/manual checks on the existing design. Report native picker/focus/layout behavior separately from unit coverage. |
 | Save performance | Release timing on synthetic fixtures; retain independent reopen/interop checks and current KDF settings. |
+| Touch ID or key material | Run `QuickUnlockTests` and Rust `session_key_material_*` regressions, regenerate bindings for exported API changes, and verify the native biometric boundary separately on a Touch ID Mac. |
 
 Rust tests are split between [lifecycle.rs](../crates/keelocker-core/tests/lifecycle.rs), [review_safety.rs](../crates/keelocker-core/tests/review_safety.rs) and [review_attachments.rs](../crates/keelocker-core/tests/review_attachments.rs). The vendor patch document names the upstream invariants these regressions protect.
 
@@ -29,7 +30,7 @@ Normal `cargo test` skips the ignored KeePassXC and timing tests. With KeePassXC
 cargo test --locked -p keelocker-core -- --include-ignored --skip save_timing --skip operation_timing
 ```
 
-The default CLI path is `/Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli`; set `KEEPASSXC_CLI` to the executable if installed elsewhere. The matrix covers KDBX 4.0/4.1, Argon2d/id, AES/ChaCha20 and password with/without a key file. Separate synthetic 3.1 imports cover legacy reads. These checks independently reopen output; same-library round trips alone are insufficient evidence for writer changes.
+The default CLI path is `/Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli`; set `KEEPASSXC_CLI` to the executable if installed elsewhere. The matrix covers KDBX 4.0/4.1, Argon2d/id, AES/ChaCha20 and password with/without a key file. It edits/saves after reopening with session key material, then independently exports the output with KeePassXC. Separate synthetic 3.1 imports cover legacy reads. Same-library round trips alone are insufficient evidence for writer changes.
 
 Tests use temporary directories. Existing fixture credentials are public and artificial; see [fixture provenance](../KeeLockerTests/Fixtures/README.md). Do not set `KEELOCKER_MATRIX_OUTPUT` during routine tests: that variable intentionally writes regenerated fixtures to its target. Regenerate fixtures only as part of a fixture change and inspect the diff/provenance.
 
@@ -58,7 +59,18 @@ xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform
 
 The [UI tests](../KeeLockerUITests/ToolbarHoverUITests.swift) contain toolbar and real-file scenarios. XCTest needs host automation support; a runner authentication/initialization failure is a coverage gap, not a pass or proof of an application defect. Report it and use focused manual checks where available.
 
-For a manual launch, `--demo-vault` opens the memory demo and `--ignore-last-vault` avoids reopening the remembered path. Use a temporary copy for real-file checks and do not overwrite the user's app or vault to isolate verification.
+For a manual launch, `--demo-vault` opens the memory demo and `--ignore-last-vault` avoids reopening the remembered path. Use a temporary copy for real-file checks and do not overwrite the user's app or vault to isolate verification. File UI tests also pass `--disable-touch-id` to inject no biometric service and avoid human-only enrollment prompts; default behavior is covered by the injected service tests.
+
+For Touch ID, use a synthetic fixture: password unlock → confirm automatic enrollment
+biometrics → Lock → Touch ID unlock → edit/save and independently reopen → Lock
+and cancel Touch ID → check password fallback → Quit/relaunch and check
+that the password is required. Check key-file vaults and delayed results after
+Lock or switching files. XCTest uses injected synthetic storage and does not
+simulate a real fingerprint. On the native boundary, a private-key operation
+with `LAContext.interactionNotAllowed` must fail; do not replace the protected
+operation with a software `evaluatePolicy` gate. macOS/Xcode sandbox restrictions
+can block the macro server, XCTest or authentication services; report actual
+coverage and use host-approved execution for these native checks.
 
 A useful real-file smoke check is: open/unlock → select/search actual entries → create a draft inside a group → cancel without a file change → Save a draft and independently reopen → edit externally in KeePassXC and observe reload → edit/save again → exercise conflict recovery if changed → Lock and check that entries/details clear. Verify UI-specific scope/focus behavior only when it is relevant to the change.
 

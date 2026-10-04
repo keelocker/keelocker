@@ -9,6 +9,9 @@ final class VaultStore: ObservableObject {
     @Published private(set) var isBusy = false
     @Published private(set) var isDirty = false
     @Published var operationFailure: VaultFailure?
+    @Published var quickUnlockFailure: QuickUnlockFailure?
+    @Published private(set) var touchIDAvailable = false
+    @Published private(set) var canQuickUnlock = false
     private(set) var lastCommandApplied = false
     @Published var hasDraft = false { didSet { if !hasDraft { refreshIfNeeded() } } }
     @Published var inspectedEntryID: UUID? { didSet { if inspectedEntryID == nil { refreshIfNeeded() } } }
@@ -22,6 +25,8 @@ final class VaultStore: ObservableObject {
     @Published private(set) var fileURL: URL?
     @Published private(set) var capabilities: VaultCapabilities = .readOnly
     private var repository: (any VaultRepository)?
+    private let quickUnlock: (any QuickUnlockService)?
+    private var quickUnlockRegistration: QuickUnlockRegistration?
     private var unlockTask: Task<Void, Never>?
     private var generation = UUID()
     private var operationTask: Task<Void, Never>?
@@ -35,8 +40,9 @@ final class VaultStore: ObservableObject {
     private var lastRefreshFailure: VaultFailure?
     private var selectionBeforeNewItem: UUID?
 
-    init(preferences: UserDefaults? = nil) {
+    init(preferences: UserDefaults? = nil, quickUnlock: (any QuickUnlockService)? = nil) {
         self.preferences = preferences
+        self.quickUnlock = quickUnlock
         if let path = preferences?.string(forKey: "lastVaultPath"), !path.isEmpty {
             openFile(URL(fileURLWithPath: path))
         }
@@ -45,6 +51,7 @@ final class VaultStore: ObservableObject {
     deinit { unlockTask?.cancel(); refreshTask?.cancel() }
 
     init(items: [VaultItem]) {
+        quickUnlock = nil
         let memory = MemoryVaultRepository(items: items)
         repository = memory
         capabilities = memory.capabilities
@@ -54,6 +61,7 @@ final class VaultStore: ObservableObject {
     var isLocked: Bool { state != .unlocked }
     var sessionID: UUID { generation }
     var requiresPassword: Bool { repository?.requiresPassword ?? false }
+    var canEnableTouchID: Bool { repository?.supportsQuickUnlock == true && fileURL != nil && touchIDAvailable }
     var groupCreationParent: VaultGroup? {
         guard let root = rootGroupCreationParent else { return nil }
         if case let .group(selected) = sidebarSelection {
@@ -84,6 +92,7 @@ final class VaultStore: ObservableObject {
         self.fileURL = fileURL
         capabilities = repository.capabilities
         state = .locked
+        refreshQuickUnlockAvailability()
     }
 
     func openDemo() {
@@ -209,6 +218,8 @@ final class VaultStore: ObservableObject {
     }
 
     func lock() {
+        quickUnlock?.cancel(request: generation)
+        quickUnlockRegistration = nil
         generation = UUID()
         fileMonitor?.invalidate()
         fileMonitor = nil
@@ -229,6 +240,7 @@ final class VaultStore: ObservableObject {
         hasDraft = false
         inspectedEntryID = nil
         operationFailure = nil
+        quickUnlockFailure = nil
         lastCommandApplied = false
         items = []
         newItemDraft = nil
@@ -240,6 +252,25 @@ final class VaultStore: ObservableObject {
         vaultName = "KeeLocker"
         searchQuery = ""
         state = repository == nil ? .noVault : .locked
+        refreshQuickUnlockAvailability()
+    }
+
+    func refreshQuickUnlockAvailability() {
+        touchIDAvailable = quickUnlock?.isAvailable ?? false
+        canQuickUnlock = canEnableTouchID && fileURL.map { quickUnlock?.contains($0) == true } == true
+    }
+
+    func forgetQuickUnlock() {
+        if let fileURL { quickUnlock?.forget(fileURL) }
+        quickUnlockRegistration = nil
+        quickUnlockFailure = nil
+        refreshQuickUnlockAvailability()
+    }
+
+    private func forgetSessionQuickUnlock() {
+        if let quickUnlockRegistration { quickUnlock?.forget(quickUnlockRegistration) }
+        quickUnlockRegistration = nil
+        refreshQuickUnlockAvailability()
     }
 
     func unlock(password: String = "", keyFile: URL? = nil) {
@@ -247,15 +278,77 @@ final class VaultStore: ObservableObject {
         let request = UUID()
         generation = request
         state = .unlocking
+        quickUnlockFailure = nil
+        let attempt = repository.supportsQuickUnlock ? fileURL.flatMap { quickUnlock?.enrollmentAttempt(for: $0) } : nil
         unlockTask = Task { [weak self] in
             do {
                 let vault = try await repository.load(password: password, keyFile: keyFile)
                 guard !Task.isCancelled, let self, self.generation == request else { return }
+                let url = vault.fileURL ?? self.fileURL
+                var registration: QuickUnlockRegistration?
+                if let quickUnlock = self.quickUnlock, let url, let attempt, quickUnlock.isAvailable {
+                    do {
+                        let enrollment = try quickUnlock.prepareEnrollment(for: url, request: request, attempt: attempt)
+                        defer { quickUnlock.finish(request: request) }
+                        var material = try await repository.keyMaterial()
+                        defer { material.resetBytes(in: 0..<material.count) }
+                        guard !Task.isCancelled, self.generation == request else { return }
+                        try await quickUnlock.cache(material, registration: enrollment, request: request)
+                        registration = enrollment
+                    } catch {
+                        guard !Task.isCancelled, self.generation == request else { return }
+                        self.quickUnlockFailure = error is CancellationError ? .cancelled : (error as? QuickUnlockFailure) ?? .storageFailed
+                    }
+                } else if let attempt {
+                    self.quickUnlock?.forget(attempt)
+                }
+                guard !Task.isCancelled, self.generation == request else { return }
                 self.apply(vault)
+                self.quickUnlockRegistration = registration
                 self.unlockTask = nil
             } catch {
                 guard !Task.isCancelled, let self, self.generation == request else { return }
                 self.state = .error((error as? VaultFailure) ?? .corruptedDatabase)
+                self.unlockTask = nil
+            }
+        }
+    }
+
+    func unlockWithTouchID() {
+        refreshQuickUnlockAvailability()
+        guard isLocked, state != .unlocking, canQuickUnlock,
+              let repository, let quickUnlock, let url = fileURL,
+              let registration = quickUnlock.registration(for: url) else { return }
+        let request = UUID()
+        generation = request
+        state = .unlocking
+        quickUnlockFailure = nil
+        unlockTask = Task { [weak self] in
+            do {
+                var material = try await quickUnlock.recover(registration: registration, request: request)
+                defer { material.resetBytes(in: 0..<material.count) }
+                guard !Task.isCancelled, let self, self.generation == request else { return }
+                let vault = try await repository.load(keyMaterial: material)
+                guard !Task.isCancelled, self.generation == request else { return }
+                guard quickUnlock.registration(for: url) == registration else {
+                    repository.lock()
+                    throw QuickUnlockFailure.missingKey
+                }
+                self.apply(vault)
+                self.quickUnlockRegistration = registration
+                self.unlockTask = nil
+            } catch {
+                guard !Task.isCancelled, let self, self.generation == request else { return }
+                if let failure = error as? VaultFailure, failure != .wrongPassword {
+                    self.state = .error(failure)
+                } else {
+                    self.state = .locked
+                    self.quickUnlockFailure = error is CancellationError ? .cancelled : (error as? QuickUnlockFailure) ?? .invalidMaterial
+                    if (error as? VaultFailure) == .wrongPassword || self.quickUnlockFailure == .missingKey || self.quickUnlockFailure == .invalidMaterial {
+                        quickUnlock.forget(registration)
+                    }
+                }
+                self.refreshQuickUnlockAvailability()
                 self.unlockTask = nil
             }
         }
@@ -310,6 +403,7 @@ final class VaultStore: ObservableObject {
             } catch {
                 guard !Task.isCancelled, let self, self.generation == request else { return }
                 self.operationFailure = (error as? VaultFailure) ?? .invalidOperation
+                if self.operationFailure == .credentialsChanged { self.forgetSessionQuickUnlock() }
                 self.isBusy = false
                 self.refreshIfNeeded()
             }
@@ -347,6 +441,7 @@ final class VaultStore: ObservableObject {
             } catch {
                 guard !Task.isCancelled, let self, self.generation == request else { return }
                 let failure = (error as? VaultFailure) ?? .failedToReadFile
+                if failure == .credentialsChanged { self.forgetSessionQuickUnlock() }
                 if self.lastRefreshFailure != failure {
                     self.operationFailure = failure
                     self.lastRefreshFailure = failure
@@ -416,10 +511,12 @@ final class VaultStore: ObservableObject {
         items = vault.entries
         isDirty = vault.isDirty
         if let url = vault.fileURL {
+            if fileURL != url { quickUnlockRegistration = nil }
             fileURL = url
             preferences?.set(url.path, forKey: "lastVaultPath")
         }
         state = .unlocked
+        refreshQuickUnlockAvailability()
         if let fileURL, fileURL != monitoredURL {
             fileMonitor?.invalidate()
             monitoredURL = fileURL

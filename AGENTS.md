@@ -12,6 +12,7 @@
 - Retain save validation, conflict checks and encrypted backups. Recover conflicts through Save Copy or an explicit reload; never silently overwrite another client's changes.
 - New items remain drafts until Save. Existing mutation commands autosave through the repository adapter; report persistence failures without dropping the in-memory edit.
 - Keep `MemoryVaultRepository` functional. Lock must clear decrypted application state and release the persistent session.
+- Prepare Touch ID automatically after a successful password unlock when supported; skip unavailable hardware and preserve password access on enrollment failure. Keep it session-only: encrypted normalized key material in RAM, biometric Secure Enclave recovery, and cache clearing on Quit. Bind enrollment/reopen to the opened canonical path; capture an enrollment revision before password load, reserve before key export, and invalidate only the failing session's registration. Recheck registration after biometric KDBX open and close revoked sessions. Keep native authentication behind the injected Quick Unlock service; cancel, finish and generation-check every request.
 - Update this file and the relevant topic document in the same change when boundaries, commands or invariants change. Dependency versions belong in manifests; verification results belong in the change report.
 
 ## Commands
@@ -40,3 +41,4 @@ Read the relevant topic before modifying its code; there is no need to load the 
 | Change upstream parsing, serialization or attachment ownership | [Vendored patch rationale](vendor/keepass/KEELOCKER-PATCH.md), Rust regression tests |
 | Add or regenerate synthetic vault fixtures | [Fixture provenance](KeeLockerTests/Fixtures/README.md) |
 | Change UI deliberately | [DESIGN.md](DESIGN.md), existing views and UI tests |
+| Change Touch ID, cached key material or authentication lifetime | [Session Quick Unlock](docs/touch-id.md), [QuickUnlockTests.swift](KeeLockerTests/QuickUnlockTests.swift) |

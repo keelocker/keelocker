@@ -12,7 +12,7 @@ final class ToolbarHoverUITests: XCTestCase {
         try FileManager.default.copyItem(at: fixture, to: path)
 
         let app = XCUIApplication()
-        app.launchArguments = ["--ignore-last-vault"]
+        app.launchArguments = ["--ignore-last-vault", "--disable-touch-id"]
         app.launch()
         app.activate()
         defer { app.terminate() }
@@ -21,6 +21,7 @@ final class ToolbarHoverUITests: XCTestCase {
         open.click()
         let choose = app.buttons["OKButton"]
         XCTAssertTrue(choose.waitForExistence(timeout: 3))
+        app.searchFields["Search"].click()
         app.typeKey("g", modifierFlags: [.command, .shift])
         let pathField = app.textFields["PathTextField"]
         XCTAssertTrue(pathField.waitForExistence(timeout: 3))
@@ -103,14 +104,16 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testOpenRealVaultRetrySearchAndLock() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ignore-last-vault"]
+        app.launchArguments = ["--ignore-last-vault", "--disable-touch-id"]
         app.launch()
         app.activate()
+        defer { app.terminate() }
         let open = app.buttons["Open Vault…"]
         XCTAssertTrue(open.waitForExistence(timeout: 5))
         open.click()
         let choose = app.buttons["OKButton"]
         XCTAssertTrue(choose.waitForExistence(timeout: 3))
+        app.searchFields["Search"].click()
         app.typeKey("g", modifierFlags: [.command, .shift])
         let pathField = app.textFields["PathTextField"]
         XCTAssertTrue(pathField.waitForExistence(timeout: 3))
@@ -127,8 +130,7 @@ final class ToolbarHoverUITests: XCTestCase {
         password.click()
         app.typeText("wrong")
         app.buttons["Unlock"].click()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Wrong password"))
-            .firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Wrong password"].waitForExistence(timeout: 15))
         password.click()
         app.typeText("fixture-password")
         app.buttons["Unlock"].click()
@@ -144,11 +146,9 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["developer@example.test"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["Edit"].isEnabled)
         app.buttons["Show"].click()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "pässword-🔐-test"))
-            .firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["pässword-🔐-test"].waitForExistence(timeout: 3))
         app.buttons["Lock vault"].click()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "KeeLocker is locked"))
-            .firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["KeeLocker is locked"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.staticTexts["developer@example.test"].exists)
     }
 

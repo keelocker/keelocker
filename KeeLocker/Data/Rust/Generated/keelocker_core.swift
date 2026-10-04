@@ -603,6 +603,11 @@ public protocol CoreVaultProtocol: AnyObject, Sendable {
     
     func history(entry: String) throws  -> [CoreEntry]
     
+    /**
+     * Secret, versioned pre-KDF components for the host's session-only quick unlock.
+     */
+    func keyMaterial() throws  -> Data
+    
     func lock() 
     
     func moveEntry(id: String, destination: String) throws 
@@ -688,6 +693,19 @@ public static func `open`(path: String, password: String, keyFile: String?)throw
 })
 }
     
+    /**
+     * Reopen with normalized credential components, never a cached final KDF key.
+     */
+public static func openWithKeyMaterial(path: String, material: Data)throws  -> CoreVault  {
+    return try  FfiConverterTypeCoreVault_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_constructor_corevault_open_with_key_material(
+        FfiConverterString.lower(path),
+        FfiConverterData.lower(material),uniffiCallStatus
+    )
+})
+}
+    
 
     
 open func attachment(entry: String, name: String)throws  -> Data  {
@@ -767,6 +785,18 @@ open func history(entry: String)throws  -> [CoreEntry]  {
     uniffi_keelocker_core_fn_method_corevault_history(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(entry),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Secret, versioned pre-KDF components for the host's session-only quick unlock.
+     */
+open func keyMaterial()throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_method_corevault_key_material(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -1795,6 +1825,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_keelocker_core_checksum_method_corevault_history() != 36464) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_keelocker_core_checksum_method_corevault_key_material() != 32997) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_keelocker_core_checksum_method_corevault_lock() != 39842) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1829,6 +1862,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_keelocker_core_checksum_constructor_corevault_open() != 56833) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_keelocker_core_checksum_constructor_corevault_open_with_key_material() != 60904) {
         return InitializationResult.apiChecksumMismatch
     }
 

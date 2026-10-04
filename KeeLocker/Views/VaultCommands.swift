@@ -250,6 +250,9 @@ final class VaultApplicationDelegate: NSObject, NSApplicationDelegate {
             if !VaultDialogs.mayLeave(guardView.store) { return .terminateCancel }
         }
         for guardView in Self.guards.compactMap(\.value) { guardView.store.lock() }
+        SessionQuickUnlock.shared.reset()
         return .terminateNow
     }
+
+    func applicationWillTerminate(_ notification: Notification) { SessionQuickUnlock.shared.reset() }
 }

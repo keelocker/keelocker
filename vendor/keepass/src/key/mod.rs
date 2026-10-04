@@ -133,6 +133,7 @@ fn parse_keyfile(buffer: &[u8]) -> Result<KeyElement, DatabaseKeyError> {
 pub struct DatabaseKey {
     password: Option<String>,
     keyfile: Option<Vec<u8>>,
+    key_elements: Option<KeyElements>,
     #[cfg(feature = "challenge_response")]
     challenge_response_key: Option<ChallengeResponseKey>,
     #[cfg(feature = "challenge_response")]
@@ -142,6 +143,7 @@ pub struct DatabaseKey {
 impl DatabaseKey {
     /// Modify the database key to include a password
     pub fn with_password(mut self, password: &str) -> Self {
+        self.clear_key_elements();
         self.password = Some(password.to_string());
         self
     }
@@ -149,6 +151,7 @@ impl DatabaseKey {
     /// Modify the database key to include a password, which is read from a prompt
     #[cfg(feature = "utilities")]
     pub fn with_password_from_prompt(mut self, prompt_message: &str) -> Result<Self, std::io::Error> {
+        self.clear_key_elements();
         self.password = Some(rpassword::prompt_password(prompt_message)?);
         Ok(self)
     }
@@ -157,6 +160,7 @@ impl DatabaseKey {
     /// a prompt
     #[cfg(all(feature = "challenge_response", feature = "utilities"))]
     pub fn with_hmac_sha1_secret_from_prompt(mut self, prompt_message: &str) -> Result<Self, std::io::Error> {
+        self.clear_key_elements();
         self.challenge_response_key = Some(ChallengeResponseKey::LocalChallenge(rpassword::prompt_password(
             prompt_message,
         )?));
@@ -169,6 +173,7 @@ impl DatabaseKey {
     /// requested, so errors with keyfile parsing will only be raised at that point, not when
     /// calling this method.
     pub fn with_keyfile(mut self, keyfile: &mut dyn Read) -> Result<Self, std::io::Error> {
+        self.clear_key_elements();
         let mut buf = Vec::new();
         keyfile.read_to_end(&mut buf)?;
 
@@ -180,6 +185,7 @@ impl DatabaseKey {
     /// Modify the database key to include a challenge-response key
     #[cfg(feature = "challenge_response")]
     pub fn with_challenge_response_key(mut self, challenge_response_key: ChallengeResponseKey) -> Self {
+        self.clear_key_elements();
         self.challenge_response_key = Some(challenge_response_key);
         self
     }
@@ -201,7 +207,30 @@ impl DatabaseKey {
         Default::default()
     }
 
-    pub(crate) fn get_key_elements(&self) -> Result<KeyElements, DatabaseKeyError> {
+    /// Reconstruct a key from normalized components, before the database KDF.
+    /// These components are secrets equivalent to the original credentials.
+    pub fn from_key_elements(mut elements: KeyElements) -> Result<Self, DatabaseKeyError> {
+        if elements.is_empty() || elements.iter().any(|element| element.len() != 32) {
+            elements.zeroize();
+            return Err(DatabaseKeyError::IncorrectKey);
+        }
+        let mut key = Self::new();
+        key.key_elements = Some(elements);
+        Ok(key)
+    }
+
+    fn clear_key_elements(&mut self) {
+        if let Some(elements) = self.key_elements.as_mut() {
+            elements.zeroize();
+        }
+        self.key_elements = None;
+    }
+
+    /// Export normalized secret components; callers must protect and clear them.
+    pub fn get_key_elements(&self) -> Result<KeyElements, DatabaseKeyError> {
+        if let Some(elements) = &self.key_elements {
+            return Ok(elements.clone());
+        }
         let mut out = Vec::new();
 
         if let Some(p) = &self.password {
@@ -230,7 +259,7 @@ impl DatabaseKey {
 
     /// Returns true if the database key is not associated with any key component.
     pub fn is_empty(&self) -> bool {
-        if self.password.is_some() || self.keyfile.is_some() {
+        if self.password.is_some() || self.keyfile.is_some() || self.key_elements.is_some() {
             return false;
         }
         #[cfg(feature = "challenge_response")]
@@ -338,16 +367,7 @@ mod key_tests {
 
         assert_eq!(ke.len(), 1);
 
-        assert!(DatabaseKey {
-            password: None,
-            keyfile: None,
-            #[cfg(feature = "challenge_response")]
-            challenge_response_key: None,
-            #[cfg(feature = "challenge_response")]
-            challenge_response_result: None,
-        }
-        .get_key_elements()
-        .is_err());
+        assert!(DatabaseKey::new().get_key_elements().is_err());
 
         Ok(())
     }

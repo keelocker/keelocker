@@ -6,6 +6,7 @@ final class RustVaultRepository: VaultRepository {
     nonisolated private static let favoriteTag = "KeeLocker:Favorite"
     let capabilities = VaultCapabilities.persistent
     let requiresPassword = true
+    let supportsQuickUnlock = true
     private var url: URL
     private var session: CoreVault?
     private var knownGroups: [VaultGroup] = []
@@ -14,13 +15,32 @@ final class RustVaultRepository: VaultRepository {
     init(url: URL) { self.url = url }
 
     func load(password: String, keyFile: URL?) async throws -> Vault {
+        let path = url.path
+        return try await load {
+            try CoreVault.open(path: path, password: password, keyFile: keyFile?.path)
+        }
+    }
+
+    func load(keyMaterial: Data) async throws -> Vault {
+        let path = url.path
+        return try await load {
+            try CoreVault.openWithKeyMaterial(path: path, material: keyMaterial)
+        }
+    }
+
+    func keyMaterial() async throws -> Data {
+        guard let session else { throw VaultFailure.invalidOperation }
+        let request = generation
+        let material = try await Task.detached(priority: .userInitiated) { try session.keyMaterial() }.value
+        guard !Task.isCancelled, generation == request else { throw CancellationError() }
+        return material
+    }
+
+    private func load(_ open: @escaping @Sendable () throws -> CoreVault) async throws -> Vault {
         let request = UUID()
         generation = request
-        let path = url.path
         do {
-            let opened = try await Task.detached(priority: .userInitiated) {
-                try CoreVault.open(path: path, password: password, keyFile: keyFile?.path)
-            }.value
+            let opened = try await Task.detached(priority: .userInitiated, operation: open).value
             guard !Task.isCancelled, generation == request else {
                 opened.lock()
                 throw CancellationError()
@@ -29,6 +49,7 @@ final class RustVaultRepository: VaultRepository {
             let vault = try await snapshot(opened)
             guard !Task.isCancelled, generation == request else { opened.lock(); throw CancellationError() }
             knownGroups = vault.groups
+            if let canonicalURL = vault.fileURL { url = canonicalURL }
             return vault
         } catch {
             if generation == request { lock() }
