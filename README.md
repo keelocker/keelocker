@@ -1,221 +1,131 @@
 # KeeLocker
 
-Native SwiftUI macOS password manager with a Rust KDBX read/write core.
-Open an existing database (⌘O), unlock, and edit. Changes to the open `.kdbx`
-are saved automatically; Save (⌘S) retries a failed write and Save As (⇧⌘S)
-creates a copy.
-KeeLocker remembers the last selected file and offers to unlock it on the next
-launch. Only its path is saved in preferences; the master password is not saved.
-The editable in-memory demo remains available.
+KeeLocker is a native SwiftUI password manager for macOS with a Rust KDBX core.
+It opens and edits existing KeePass vaults while preserving data used by other
+KeePass clients.
 
-On a Mac with Touch ID and Secure Enclave, Touch ID is prepared automatically
-after a successful master-password unlock. Confirm the native biometric prompt;
-cancelling it still opens the vault with the password. After Lock, choose
-**Unlock with Touch ID**. A full Quit or restart requires the master password again (and the key file
-if used). The session cache contains encrypted key material in memory only;
-Secure Enclave requires biometrics to recover it. No Apple Developer Team is
-needed for this local build. Details: [Session Quick Unlock](docs/touch-id.md).
+**Early development:** the KDBX writer and compatibility checks are still being
+tested. Use a copy of your vault and keep an independent backup before trying it.
+There is no stable release or guarantee that every third-party vault is supported.
 
-## Build
+macOS is the current platform. There are no iOS, Android or Windows app targets.
 
-macOS 14+, Xcode 26+, and Rust installed through rustup. Verified toolchains:
-Swift 6.4 / Xcode 27 beta and Rust 1.98.1 on Apple Silicon. The Xcode build phase
-builds and statically links Rust. For universal builds install both
-`aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets; Intel runtime is untested.
+## Use
 
-```sh
-xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' build
-```
+Open a `.kdbx` with **File → Open** (⌘O), then enter its password and optional key
+file. Existing entry, group and attachment changes save automatically. A new
+entry stays a draft until **Save**; **Cancel** leaves the file untouched.
+**File → Save** (⌘S) retries a failed write, and **Save As** (⇧⌘S) creates a copy.
 
-`Cargo.lock` pins dependencies. UniFFI Swift/header/module-map files are committed.
-After exported API changes run `bash scripts/generate-bindings.sh`.
+KeeLocker remembers the last selected vault's path, but never saves the master
+password in preferences. An editable in-memory demo is also available.
 
-## Architecture
-
-```text
-SwiftUI → VaultStore → VaultRepository
-                       ├─ MemoryVaultRepository
-                       └─ RustVaultRepository → UniFFI → CoreVault
-
-crates/keelocker-core/src/
-├─ vault/      session and mutation commands
-├─ models/     KeeLocker-owned FFI DTOs
-├─ kdbx/       loading, compatibility guards, round-trip validation, safe save
-└─ error.rs    safe error categories
-```
-
-`keepass` 0.15.0 handles parsing, encryption and serialization. UniFFI 0.32.2
-provides the bridge in `KeeLocker/Data/Rust`. No KDBX library types reach SwiftUI.
-Rust owns the complete database and DatabaseKey under a mutex; Swift requests
-redacted lists and selected-entry/history details. File/crypto work runs off the
-main thread. Lock clears UI snapshots and drops the Rust session; generation
-checks reject stale results. An in-flight save completes before its mutex is
-released. A background KDF preparation already running at Lock finishes and drops
-its result; it cannot repopulate the closed session. Swift strings are not guaranteed to be zeroed.
-
-The upstream writer is experimental. The pinned MIT-licensed source in
-`vendor/keepass` includes parsing/reference fixes and compatibility guards;
-see `vendor/keepass/KEELOCKER-PATCH.md`. KDBX cryptography stays in that library;
-the optional session cache uses Apple's CryptoKit and biometric Secure Enclave keys.
+On a Mac with Touch ID and Secure Enclave, a successful password unlock prepares
+Touch ID automatically. Cancelling enrollment leaves the vault open. After
+**Lock**, choose **Unlock with Touch ID**. Quit or restart clears the encrypted
+memory cache, so the next launch needs the password and key file again.
+See [Session Quick Unlock](docs/touch-id.md) for the protection model and limits.
 
 ## Supported behavior
 
-- Read KDBX 3.1/4.0/4.1; write **4.1**, retaining cipher/KDF settings. Saving an
-  older file upgrades its format version.
-- Tested AES-256/ChaCha20, AES-KDF/Argon2d/Argon2id, protected values and key files.
-- DatabaseName, with filename fallback; UUIDs, nested/empty groups, title,
-  username/password/URL/notes/tags, protected custom fields, timestamps.
-- Extra URLs remain standard custom fields, e.g. KP2A_URL. Recognized `otp`
-  otpauth URIs generate live TOTP in Rust.
-- Entry/group CRUD and moves through context menus. Group deletion requires an
-  empty group; entry deletion records a tombstone, not a recycle-bin move.
-- Attachment add/replace/delete/export and history inspection through
-  **Attachments & History…**. Historical attachment versions are preserved.
-- Metadata, arbitrary standard CustomData keys, public custom data, icons,
-  auto-type settings and history are retained even when UI does not edit them.
-- Favorites persist using the standard KDBX tag `KeeLocker:Favorite`. KeeLocker
-  displays it as a star rather than a regular tag; other clients can see the tag.
-- Entry, group and attachment changes save the opened file immediately. A failed
-  write leaves the edit in memory, marks the vault unsaved, and shows an error;
-  File → Save retries or Save As creates a copy. Open/Lock/window-close/Quit
-  guard these unsaved changes. Finish/cancel an item draft before navigation.
-- New login (toolbar + or ⌘N) opens an editable draft in the current group,
-  without adding an entry or writing the file. Save creates and persists it;
-  Cancel drops the draft and restores the previous selection. A new login from
-  Favorites starts as a favorite so it remains in that section after saving.
-- External saves update an unlocked vault automatically, including KeePassXC's
-  atomic file replacement and in-place writes. Directory/file notifications are
-  debounced, and returning to KeeLocker checks again. The source hash filters out
-  KeeLocker's own saves; decryption and parsing run in Rust off the main thread.
-  Selection, search and group scope are retained where still valid. Watchers stop
-  on Lock and follow the destination after Save As.
-- Automatic reload waits while editing an item or inspecting attachments/history,
-  and never discards dirty changes. If both applications change the file, the
-  conflict alert offers Save Copy or Reload Latest (discard local changes only
-  after the file has been successfully read). Cancel retains the local changes.
-  Changed master credentials require Lock/Unlock with the current credentials.
-- Create folders with File → New Group… (⌘⇧N), inside the selected group or the
-  database root from All items/Favorites. Right-click a group → New Group creates
-  a child there; right-click the sidebar background → New Group creates a child
-  of the database root regardless of selection. Group creation saves the opened
-  vault immediately, selects the new folder and expands its ancestors.
-- Sidebar groups show short names with indentation and disclosure arrows for
-  branches. Collapsing a branch hides its descendants; if the selected group
-  would be hidden, selection moves to that branch. Collapse state is kept during
-  edits and external reloads, and cleared on Lock. Disclosure rotates the arrow
-  and animates row appearance/position over 150 ms, without bounce or stagger.
-  Reduce Motion disables these animations; they are scoped to the group tree.
+- Read KDBX 3.1, 4.0 and 4.1; save as **4.1**, retaining cipher and KDF settings.
+  The interoperability tests cover AES-256/ChaCha20, AES-KDF/Argon2d/Argon2id,
+  protected values and key files.
+- Edit entries, nested groups, tags and protected custom fields. Add, replace,
+  delete and export attachments; inspect entry history. Empty groups can be
+  deleted; deleting an entry records a tombstone.
+- Display live TOTP from recognized `otp` otpauth URIs. Extra URLs remain custom
+  fields; HOTP and unknown OTP kinds remain raw fields without TOTP display.
+  Favorites use the standard tag `KeeLocker:Favorite`.
+- Preserve metadata, UUIDs, timestamps, history, historical attachments, icons,
+  auto-type settings and standard CustomData even when the UI cannot edit them.
+  Entry mutations honor the database's history retention limits.
+- Reload external changes while unlocked, including atomic saves by KeePassXC.
+  Reload waits during editing or attachment/history inspection and preserves
+  valid selection and group scope. Conflicts offer **Save Copy** or an explicit
+  **Reload Latest**; failed reads retain local changes.
+- Clear decrypted application state on Lock. File and cryptographic work runs
+  outside the main thread.
+
+Database creation, master-key changes, automatic merge, history restoration,
+recycle-bin UI, field-reference expansion, auto-type execution, icon editing,
+persistent Keychain unlock, cloud sync and hardware keys are not implemented.
+Twofish is outside the tested interoperability matrix.
 
 ## Safe save and limitations
 
-Serialize with fresh library-generated salts/IVs → reopen → compare the complete
-model, including protection/history/metadata/attachment bytes → same-directory
-private temporary file → sync → atomic rename → directory sync. Validation
-reuses this save's KDF output, avoiding a second Argon2/AES-KDF pass;
-header and payload authentication, decryption and model comparison still run.
-Each unlocked session prepares one future save key in the background, using a
-fresh KDF salt and the unchanged database KDF parameters. The preparation is
-consumed exactly once, including on failed writes. Its derived key is zeroized
-after validation. The next preparation starts after each save attempt; nothing
-is shared between vaults or persisted outside the KDBX. A save waits if preparation
-is not ready yet. This moves KDF work into editing time rather than weakening it.
-Opening decrypts once: compatibility checks and XML parsing share that payload.
-Attachment validation hashes bytes directly instead of first expanding them into JSON.
-Derived binary IDs and history-parent references are normalized during comparison. Save first
-creates an encrypted `.bak` of the previous source. No plaintext is written by
-vault saving. Existing ACLs/extended attributes are not copied.
+Before writing, KeeLocker serializes encrypted KDBX, reopens it and compares the
+complete model, including protected values, metadata, history and attachment
+bytes. It writes a private temporary file beside the destination, syncs it,
+creates an encrypted `.bak` of the previous source, checks for external changes
+and atomically replaces the source. Vault saving writes no plaintext. Attachment
+export deliberately writes the selected attachment to the chosen destination.
 
-Source SHA-256 is checked twice before replace. External modification returns
-Conflict if local edits race an external save; clean sessions reload automatically.
-Save As refuses an existing different destination. A small check/rename
-race remains with non-cooperating writers: this is not multi-writer synchronization.
-A directory-sync failure after rename can report WriteFailed although the new
-file already exists; the encrypted backup permits recovery.
+A failed write keeps the edit in memory and marks the vault unsaved. Save retries
+the write; Save As preserves a separate copy. Open, Lock and exit guard unsaved
+changes. Save As refuses an existing different destination.
 
-Unknown XML extensions/attributes, duplicate keys/UUIDs, unsupported KDF fields,
-and nonempty KDBX4 header comments are rejected rather than discarded. Arbitrary
-standard CustomData values are preserved. The guard is conservative and rejects
-some valid third-party extensions. KDBX3.1 requires a valid embedded HeaderHash;
-it is authenticated before protected fields are parsed and removed during the
-4.1 upgrade. Older files without this authentication field are refused.
-Malformed numeric header values return errors; parser panics are contained before
-they can poison an open session. Failed reloads retain unsaved data for Save Copy.
-List snapshots carry an explicit redaction marker and cannot be used as replacement
-edits. Delayed file-dialog and attachment actions are bound to their source session.
+- Saving an older supported file upgrades it to KDBX 4.1. Compatibility guards
+  reject unknown structures the writer cannot preserve, including some valid
+  third-party extensions. KDBX 3.1 requires its embedded HeaderHash.
+- Hash checks reduce conflicts but do not synchronize multiple writers. A small
+  check/rename race remains with other clients. A directory-sync failure can be
+  reported after replacement has committed. KeeLocker retains the written path
+  and hash, keeps the session dirty with a durability warning, and allows Save to
+  retry. If Save As committed, the session adopts its destination despite that
+  warning. The encrypted backup remains a recovery option.
+- Existing ACLs and extended attributes are not copied. Keep independent backups
+  and verify permissions when using shared or managed files.
+- Hostile-file resource and KDF limits are not implemented. Some authentication
+  damage is indistinguishable from wrong credentials. Swift strings and copied
+  buffers are not guaranteed to be zeroed; plaintext exists while unlocked.
 
-Not implemented: new database creation, master-key changes, automatic merge,
-history restoration/pruning, recycle-bin UI, field-reference expansion, auto-type
-execution, icon editing, Keychain, cloud/sync, hardware keys. Twofish is
-provided by the crate but outside the tested matrix. Hostile-file resource/KDF
-limits are not yet implemented. Authentication-header damage can be
-indistinguishable from wrong credentials; KDBX3 padding failure maps to that error.
+The [architecture document](docs/architecture.md) specifies save validation,
+session lifetime and conflict recovery. KDBX parsing, encryption and KDFs use the
+vendored `keepass` library with a [preservation patch](vendor/keepass/KEELOCKER-PATCH.md).
 
-## Tests
+## Build
+
+Use macOS 14 or newer, Xcode 26 or newer, and Rust installed through rustup.
+The Rust minimum version and dependencies are declared in
+[Cargo.toml](crates/keelocker-core/Cargo.toml); `Cargo.lock` pins dependency resolution.
+Run from the repository root on Apple Silicon:
 
 ```sh
-cargo test -p keelocker-core -- --include-ignored --skip save_timing --skip operation_timing
-xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -only-testing:KeeLockerTests test
+rustup target add aarch64-apple-darwin
+xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/keelocker-derived build
 ```
 
-Ignored Rust interop tests require KeePassXC CLI; override its macOS path with
-`KEEPASSXC_CLI`. They cover 16 combinations of KDBX 4.0/4.1 × Argon2d/id ×
-AES/ChaCha20 × password/password+keyfile. KeePassXC rewrites a fixture, Rust edits
-and saves a copy, KeePassXC exports/edits it, then Rust reopens it. Independent
-KeePassXC-created/imported 3.1 fixtures are also tested. Regression coverage
-includes metadata, custom icons, UUIDs/timestamps, historical attachments,
-corruption, conflicts and lock. Credentials are synthetic; see fixtures README.
+The Xcode phase builds and links Rust. Universal builds also require
+`x86_64-apple-darwin`; Intel runtime remains unverified. Local builds do not
+require an Apple Developer Team. Generated UniFFI Swift, header and module-map
+files are committed; exported API changes require regeneration.
 
-Manual performance checks (release mode, synthetic fixtures only):
-`cargo test --release -p keelocker-core operation_timing -- --ignored --nocapture`.
-This measures opening, snapshots, immediate saves and saves after a 400 ms editing
-pause for Argon2id, AES-KDF, an 8 MiB attachment, and 5000 entries. Timing is not a
-CI assertion. On this Apple Silicon host, Argon2id saves after the pause fell from
-about 208 ms to 11 ms; saving immediately after unlock can still wait for the KDF.
+## Development
 
-The existing toolbar tests use `--demo-vault`; a real-file UI test uses the native
-picker. XCTest UI execution requires host automation support.
+```sh
+cargo test --locked -p keelocker-core
+cargo fmt --all -- --check
+cargo clippy --locked -p keelocker-core --all-targets -- -D warnings
+bash scripts/check-bindings.sh
+xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/keelocker-derived -only-testing:KeeLockerTests test
+```
 
-Verified on 2026-09-28: Rust 10/10 tests (including 16 KeePassXC configurations),
-Swift 13/13 unit/bridge tests, and the macOS debug app build pass. Native UI
-checks covered Open → Unlock → Save As → Edit → Save → create group/entry → Save
-→ Quit → reopen, plus the unsaved-Quit guard. KeePassXC successfully opened the
-UI-saved copy and confirmed its edits. The full automated toolbar UI suite is
-not claimed as passed: the earlier XCTest runner timed out enabling automation.
+Use the host's command wrapper where required. Independent KeePassXC tests,
+native UI checks and performance diagnostics have additional requirements in
+[Development and verification](docs/development.md). Fixtures and credentials
+are synthetic; see their [provenance](KeeLockerTests/Fixtures/README.md).
 
-Verified on 2026-09-29: 14 KeeLocker unit/bridge tests pass, including direct
-autosave to the opened file and conflict recovery through Save As.
+The [CI workflow](.github/workflows/ci.yml) defines Rust MSRV/stable checks,
+KeePassXC interoperability, binding comparison and macOS build/Swift tests.
+Native UI automation and fingerprint success require host support and manual
+verification; they are not covered by the hosted workflow.
 
-Verified on 2026-09-30: Rust 17/17 tests (including the KeePassXC matrix) and
-Swift 22/22 unit/bridge tests pass. The new external-save regression failed before
-the fix and passes with automatic reload. Coverage includes repeated atomic and
-in-place saves, deleted selections, changed groups/KDFs/credentials, draft
-preservation, conflict recovery, Save As monitoring, and late refresh after Lock.
-Manual native UI verification used a separate app identity and a temporary vault:
-KeePassXC CLI edit → live list/details update → KeeLocker Edit/Save → simultaneous
-external save → conflict alert → Reload Latest. The dedicated XCTest UI test is
-included, but its runner could not initialize because macOS returned
-"Authentication canceled. System authentication is running."
+Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
+Security reporting and reporting-channel status: [SECURITY.md](SECURITY.md).
 
-Sidebar hierarchy verification on 2026-09-30: the existing 22 Swift tests and two
-new tree/selection tests pass, with a successful macOS debug build. Native UI
-checks on a temporary KDBX covered short names/indentation, collapse/expand,
-creating inside a collapsed group, and creating at root from empty sidebar space
-while a nested group was selected. KeePassXC CLI reopened the saved file and
-confirmed both new groups in the expected parents.
+## License
 
-New-entry draft verification on 2026-10-01: 28 Swift unit/bridge tests and the
-macOS debug build pass. The new regression test reproduced immediate creation
-and the All items jump before the fix. Coverage includes Save, Cancel, creation
-failure/retry, Favorites, Lock, and reopening the saved KDBX. Native verification
-on a temporary database covered + and ⌘N inside a nested group, editable fields,
-Cancel restoring the previous entry, and Save selecting the new entry without
-changing group. The file hash stayed unchanged while typing and after Cancel;
-KeePassXC CLI successfully read the new entry after Save.
-
-Deep review verification on 2026-10-01: 33 Swift unit/bridge tests and 27 Rust
-tests pass, including the KeePassXC matrix. New regressions reproduce stale
-details during external refresh, repeat creation during draft Save, redacted
-replacement edits, KDBX3 header tampering, malformed-header reload recovery,
-shared/historical attachments, sparse binary IDs, custom-icon group deletion,
-rejected moves and invalid tag delimiters. Generated UniFFI files match the API;
-Clippy with warnings denied, formatting and the macOS debug build pass.
+KeeLocker's own code is [MIT licensed](LICENSE). Dependencies retain their own
+licenses; see [third-party notices](THIRD_PARTY_NOTICES.md) and the vendored
+library's license.

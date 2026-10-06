@@ -10,9 +10,7 @@ struct ItemDetailView: View {
     let onSave: ((VaultItem) async -> Bool)?
     let onBeginEditing: (() -> Bool)?
     let onCancel: (() -> Void)?
-    @AppStorage("clearClipboard") private var clearsClipboard = true
-
-    @State private var draft: VaultItem
+    @State private var draft: ItemEditingDraft
     @State private var isEditing = false
     @State private var showsPassword = false
     @State private var copiedValue: CopiedValue?
@@ -31,12 +29,12 @@ struct ItemDetailView: View {
         self.onSave = onSave
         self.onBeginEditing = onBeginEditing
         self.onCancel = onCancel
-        _draft = State(initialValue: isNew ? item.wrappedValue : .empty)
+        _draft = State(initialValue: ItemEditingDraft(isNew ? item.wrappedValue : .empty))
         _isEditing = State(initialValue: isNew)
     }
 
     private var presentedItem: VaultItem {
-        isEditing ? draft : item
+        isEditing ? draft.item : item
     }
 
     var body: some View {
@@ -58,7 +56,7 @@ struct ItemDetailView: View {
         .background(KeeTheme.canvas)
         .onAppear { if isNew { titleHasFocus = true } }
         .onDisappear {
-            draft = .empty
+            draft = ItemEditingDraft()
             showsPassword = false
         }
     }
@@ -69,7 +67,7 @@ struct ItemDetailView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 if isEditing {
-                    TextField("Title", text: $draft.title)
+                    TextField("Title", text: $draft.item.title)
                         .textFieldStyle(.plain)
                         .font(.system(size: 30, weight: .semibold))
                         .lineLimit(1)
@@ -96,7 +94,7 @@ struct ItemDetailView: View {
 
             Button {
                 if isEditing {
-                    draft.isFavorite.toggle()
+                    draft.item.isFavorite.toggle()
                 } else {
                     item.isFavorite.toggle()
                 }
@@ -141,7 +139,7 @@ struct ItemDetailView: View {
 
             if isEditing {
                 DetailActionButton(title: "Cancel", iconName: "xmark") {
-                    draft = .empty
+                    draft = ItemEditingDraft()
                     isEditing = false
                     if let onCancel { onCancel() }
                     else { hasDraft = false }
@@ -153,24 +151,25 @@ struct ItemDetailView: View {
                 iconName: isEditing ? "checkmark" : "pencil"
             ) {
                 if isEditing {
-                    draft.modifiedAt = .now
+                    draft.item.modifiedAt = .now
+                    let savedItem = draft.savedItem
                     if let onSave {
                         Task {
-                            if await onSave(draft) {
-                                draft = .empty
+                            if await onSave(savedItem) {
+                                draft = ItemEditingDraft()
                                 isEditing = false
                                 hasDraft = false
                             }
                         }
                     } else {
-                        item = draft
-                        draft = .empty
+                        item = savedItem
+                        draft = ItemEditingDraft()
                         isEditing = false
                         hasDraft = false
                     }
                 } else {
                     guard onBeginEditing?() ?? true else { return }
-                    draft = item
+                    draft = ItemEditingDraft(item)
                     isEditing = true
                     hasDraft = true
                 }
@@ -186,14 +185,14 @@ struct ItemDetailView: View {
                     EditableCredentialRow(
                         label: "Username",
                         iconName: "person",
-                        text: $draft.username,
+                        text: $draft.item.username,
                         prompt: "Username or email"
                     )
                     PanelDivider()
                     EditableCredentialRow(
                         label: "Password",
                         iconName: "key",
-                        text: $draft.password,
+                        text: $draft.item.password,
                         prompt: "Password",
                         isSecure: true
                     )
@@ -201,7 +200,7 @@ struct ItemDetailView: View {
                     EditableCredentialRow(
                         label: "Website",
                         iconName: "globe",
-                        text: $draft.website,
+                        text: $draft.item.website,
                         prompt: "https://example.com"
                     )
                 } else {
@@ -254,16 +253,16 @@ struct ItemDetailView: View {
             if isEditing {
                 DetailSection(title: "Custom fields") {
                     VStack(spacing: 8) {
-                        ForEach($draft.customFields) { $field in
+                        ForEach($draft.item.customFields) { $field in
                             HStack {
                                 TextField("Name", text: $field.name)
                                 if field.isSensitive { SecureField("Value", text: $field.value) }
                                 else { TextField("Value", text: $field.value) }
                                 Toggle("Protected", isOn: $field.isSensitive)
-                                Button(role: .destructive) { draft.customFields.removeAll { $0.id == field.id } } label: { Image(systemName: "minus.circle") }
+                                Button(role: .destructive) { draft.item.customFields.removeAll { $0.id == field.id } } label: { Image(systemName: "minus.circle") }
                             }
                         }
-                        Button("Add Field") { draft.customFields.append(CustomField(name: "", value: "")) }
+                        Button("Add Field") { draft.item.customFields.append(CustomField(name: "", value: "")) }
                     }
                     .padding(12)
                 }
@@ -291,7 +290,7 @@ struct ItemDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 if isEditing {
                     DetailSection(title: "Notes") {
-                        TextEditor(text: $draft.notes)
+                        TextEditor(text: $draft.item.notes)
                             .font(.body)
                             .scrollContentBackground(.hidden)
                             .frame(minHeight: 88)
@@ -311,10 +310,7 @@ struct ItemDetailView: View {
                 }
 
                 if isEditing {
-                    TextField("Tags (separated by semicolons)", text: Binding(
-                        get: { draft.tags.joined(separator: "; ") },
-                        set: { draft.tags = $0.split(separator: ";", omittingEmptySubsequences: false).map(String.init) }
-                    ))
+                    TextField("Tags (separated by semicolons)", text: $draft.tagsText)
                     .textFieldStyle(.roundedBorder)
                 } else if !presentedItem.tags.isEmpty {
                     VStack(alignment: .leading, spacing: 9) {
@@ -338,10 +334,7 @@ struct ItemDetailView: View {
     }
 
     private func copy(_ value: String, as copiedValue: CopiedValue) {
-        guard !value.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
-        let pasteboardChangeCount = NSPasteboard.general.changeCount
+        guard ClipboardOwner.shared.copy(value) else { return }
         let feedbackToken = UUID()
         copyFeedbackToken = feedbackToken
         self.copiedValue = copiedValue
@@ -350,17 +343,30 @@ struct ItemDetailView: View {
             guard self.copyFeedbackToken == feedbackToken else { return }
             self.copiedValue = nil
         }
-
-        guard clearsClipboard else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-            guard NSPasteboard.general.changeCount == pasteboardChangeCount else { return }
-            NSPasteboard.general.clearContents()
-        }
     }
 
     private func openWebsite() {
         guard let url = presentedItem.websiteURL else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// Keep field input verbatim while editing; normalize tags only for the saved entry.
+struct ItemEditingDraft {
+    var item: VaultItem
+    var tagsText: String
+
+    init(_ item: VaultItem = .empty) {
+        self.item = item
+        tagsText = item.tags.joined(separator: "; ")
+    }
+
+    var savedItem: VaultItem {
+        var saved = item
+        saved.tags = tagsText.split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return saved
     }
 }
 

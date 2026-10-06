@@ -8,7 +8,7 @@ use crate::{
     compression::Compression,
     db::Color,
     format::xml_db::{
-        custom_serde::{cs_base64, cs_opt_bool, cs_opt_fromstr, cs_opt_string},
+        custom_serde::{cs_base64, cs_opt_bool, cs_opt_fromstr, cs_opt_string, cs_opt_text},
         entry::UnprotectError,
         timestamp::Timestamp,
         UUID,
@@ -20,14 +20,14 @@ use crate::{
 pub struct Meta {
     #[serde(
         default,
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         skip_serializing_if = "Option::is_none"
     )]
     generator: Option<String>,
 
     #[serde(
         default,
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         skip_serializing_if = "Option::is_none"
     )]
     database_name: Option<String>,
@@ -41,7 +41,7 @@ pub struct Meta {
 
     #[serde(
         default,
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         skip_serializing_if = "Option::is_none"
     )]
     database_description: Option<String>,
@@ -55,7 +55,7 @@ pub struct Meta {
 
     #[serde(
         default,
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         rename = "DefaultUserName",
         skip_serializing_if = "Option::is_none"
     )]
@@ -540,7 +540,7 @@ pub struct Icon {
     #[serde(rename = "UUID")]
     pub uuid: UUID,
 
-    #[serde(default, with = "cs_opt_string")]
+    #[serde(default, with = "cs_opt_text")]
     pub name: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]

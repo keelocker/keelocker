@@ -1,5 +1,19 @@
 import Foundation
 
+protocol RustVaultOpening: Sendable {
+    func open(path: String, password: String, keyFile: String?) throws -> CoreVault
+    func open(path: String, keyMaterial: Data) throws -> CoreVault
+}
+
+private struct NativeRustVaultOpening: RustVaultOpening {
+    func open(path: String, password: String, keyFile: String?) throws -> CoreVault {
+        try CoreVault.open(path: path, password: password, keyFile: keyFile)
+    }
+    func open(path: String, keyMaterial: Data) throws -> CoreVault {
+        try CoreVault.openWithKeyMaterial(path: path, material: keyMaterial)
+    }
+}
+
 // Only this adapter and generated bindings know the native Rust API.
 @MainActor
 final class RustVaultRepository: VaultRepository {
@@ -11,20 +25,28 @@ final class RustVaultRepository: VaultRepository {
     private var session: CoreVault?
     private var knownGroups: [VaultGroup] = []
     private var generation = UUID()
+    private let loadAdmission: VaultLoadAdmission
+    private let opening: any RustVaultOpening
+    private var loadRequest: VaultLoadAdmission.Request?
 
-    init(url: URL) { self.url = url }
+    init(url: URL, loadAdmission: VaultLoadAdmission? = nil,
+         opening: any RustVaultOpening = NativeRustVaultOpening()) {
+        self.url = url
+        self.loadAdmission = loadAdmission ?? .shared
+        self.opening = opening
+    }
 
     func load(password: String, keyFile: URL?) async throws -> Vault {
-        let path = url.path
-        return try await load {
-            try CoreVault.open(path: path, password: password, keyFile: keyFile?.path)
+        let opening = opening
+        return try await load { path in
+            try opening.open(path: path, password: password, keyFile: keyFile?.path)
         }
     }
 
     func load(keyMaterial: Data) async throws -> Vault {
-        let path = url.path
-        return try await load {
-            try CoreVault.openWithKeyMaterial(path: path, material: keyMaterial)
+        let opening = opening
+        return try await load { path in
+            try opening.open(path: path, keyMaterial: keyMaterial)
         }
     }
 
@@ -36,21 +58,36 @@ final class RustVaultRepository: VaultRepository {
         return material
     }
 
-    private func load(_ open: @escaping @Sendable () throws -> CoreVault) async throws -> Vault {
+    private func load(_ open: @escaping @Sendable (String) throws -> CoreVault) async throws -> Vault {
+        try Task.checkCancellation()
+        if let loadRequest { loadAdmission.cancel(loadRequest) }
         let request = UUID()
         generation = request
+        let admission = loadAdmission.request(for: url)
+        loadRequest = admission
+        defer {
+            loadAdmission.release(admission)
+            if loadRequest == admission { loadRequest = nil }
+        }
         do {
-            let opened = try await Task.detached(priority: .userInitiated, operation: open).value
-            guard !Task.isCancelled, generation == request else {
-                opened.lock()
-                throw CancellationError()
+            try await loadAdmission.acquire(admission)
+            guard !Task.isCancelled, generation == request else { throw CancellationError() }
+            let opened = try await Task.detached(priority: .userInitiated) {
+                try open(admission.path)
+            }.value
+            do {
+                guard !Task.isCancelled, generation == request else { throw CancellationError() }
+                let vault = try await snapshot(opened)
+                guard !Task.isCancelled, generation == request else { throw CancellationError() }
+                session = opened
+                knownGroups = vault.groups
+                if let canonicalURL = vault.fileURL { url = canonicalURL }
+                return vault
+            } catch {
+                // Keep admission until the late session has released its data.
+                await Task.detached { opened.lock() }.value
+                throw error
             }
-            session = opened
-            let vault = try await snapshot(opened)
-            guard !Task.isCancelled, generation == request else { opened.lock(); throw CancellationError() }
-            knownGroups = vault.groups
-            if let canonicalURL = vault.fileURL { url = canonicalURL }
-            return vault
         } catch {
             if generation == request { lock() }
             throw Self.failure(error)
@@ -59,6 +96,8 @@ final class RustVaultRepository: VaultRepository {
 
     func lock() {
         generation = UUID()
+        if let loadRequest { loadAdmission.cancel(loadRequest) }
+        loadRequest = nil
         let closing = session
         session = nil
         knownGroups = []
@@ -71,6 +110,7 @@ final class RustVaultRepository: VaultRepository {
         let request = generation
         do {
             let result = try await Task.detached(priority: .userInitiated) {
+                var saveFailure: VaultFailure?
                 switch command {
                 case .createEntry(let item):
                     guard !item.isRedacted else { throw VaultFailure.invalidOperation }
@@ -84,13 +124,16 @@ final class RustVaultRepository: VaultRepository {
                 case .renameGroup(let id, let name): try session.renameGroup(id: id.uuidString, name: name)
                 case .deleteGroup(let id): try session.deleteGroup(id: id.uuidString)
                 case .moveGroup(let id, let destination): try session.moveGroup(id: id.uuidString, destination: destination.uuidString)
-                case .save: try session.save()
+                case .save:
+                    do { try session.save() }
+                    catch CoreError.WriteFailed { saveFailure = .writeFailed }
                 case .reload: try session.reload()
-                case .saveAs(let url): try session.saveAs(path: url.path)
+                case .saveAs(let url):
+                    do { try session.saveAs(path: url.path) }
+                    catch CoreError.WriteFailed { saveFailure = .writeFailed }
                 case .putAttachment(let id, let name, let data): try session.putAttachment(entry: id.uuidString, name: name, data: data)
                 case .deleteAttachment(let id, let name): try session.deleteAttachment(entry: id.uuidString, name: name)
                 }
-                var saveFailure: VaultFailure?
                 switch command {
                 case .save, .saveAs, .reload:
                     break
@@ -98,6 +141,8 @@ final class RustVaultRepository: VaultRepository {
                     do { try session.save() }
                     catch { saveFailure = (Self.failure(error) as? VaultFailure) ?? .writeFailed }
                 }
+                // WriteFailed can follow a committed rename. Rust's snapshot owns
+                // the accepted path/hash and retains dirty until durability recovers.
                 return VaultCommandResult(vault: try Self.map(session.snapshot()), saveFailure: saveFailure)
             }.value
             guard !Task.isCancelled, generation == request else { throw CancellationError() }
@@ -220,5 +265,71 @@ final class RustVaultRepository: VaultRepository {
         case .Conflict: return VaultFailure.conflict
         case .InvalidOperation: return VaultFailure.invalidOperation
         }
+    }
+}
+
+/// Admission covers open and snapshot/late-session cleanup, never saves or other
+/// vaults. Shared state holds paths, IDs and continuations, not credential closures.
+@MainActor
+final class VaultLoadAdmission {
+    static let shared = VaultLoadAdmission()
+
+    struct Request: Equatable, Sendable {
+        let path: String
+        let id = UUID()
+    }
+
+    private struct Waiter {
+        let request: Request
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
+    private var active: [String: UUID] = [:]
+    private var queued: [String: Waiter] = [:]
+
+    func request(for url: URL) -> Request {
+        Request(path: url.resolvingSymlinksInPath().standardizedFileURL.path)
+    }
+
+    func acquire(_ request: Request) async throws {
+        try Task.checkCancellation()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if active[request.path] == nil {
+                    active[request.path] = request.id
+                    continuation.resume()
+                } else {
+                    let previous = queued.updateValue(Waiter(request: request, continuation: continuation), forKey: request.path)
+                    previous?.continuation.resume(throwing: CancellationError())
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in self.cancel(request) }
+        }
+    }
+
+    func cancel(_ request: Request) {
+        guard queued[request.path]?.request == request else { return }
+        queued.removeValue(forKey: request.path)?.continuation.resume(throwing: CancellationError())
+        // An admitted synchronous open keeps its slot until it really finishes.
+    }
+
+    func release(_ request: Request) {
+        guard active[request.path] == request.id else { return }
+        if let next = queued.removeValue(forKey: request.path) {
+            active[request.path] = next.request.id
+            next.continuation.resume()
+        } else {
+            active.removeValue(forKey: request.path)
+        }
+    }
+
+    // Read-only request metadata also permits deterministic admission tests.
+    func queuedRequest(for url: URL) -> Request? {
+        queued[url.resolvingSymlinksInPath().standardizedFileURL.path]?.request
     }
 }

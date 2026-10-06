@@ -1,7 +1,7 @@
 # Session Quick Unlock with Touch ID
 
-KeeLocker follows KeePassXC's session lifetime: enter the master credentials after
-launch, then use Touch ID after Lock until the process quits. Touch ID enrollment
+Enter the master credentials after launch, then use Touch ID after Lock until
+the process quits. Touch ID enrollment
 is automatic after a successful password unlock on supported hardware. Lock clears
 the UI and Rust database/key; only encrypted cached key material survives in RAM.
 After Quit, crash or restart, the master credentials are required again. There is
@@ -64,20 +64,14 @@ Watch or generic user-presence alternatives. Adding/removing fingerprints makes
 the key unusable; unlock manually and enroll again. Any fingerprint authorized
 for that macOS account can satisfy the biometric policy.
 
-## Difference from KeePassXC and signing
+## Native integration and signing
 
-[KeePassXC's implementation](https://github.com/keepassxreboot/keepassxc/blob/2.7.11/src/touchid/TouchID.mm)
-uses a biometric Keychain item for a random wrapping key and process-memory
-encrypted database key material. KeeLocker uses the same session lifetime and
-encrypted-material model, with a temporary biometric Secure Enclave private key
-as its native protection boundary. It creates no persistent Keychain item.
-
-Protected Data Protection Keychain items require appropriate signing entitlements.
-Synthetic probes in the current ad-hoc app bundle returned `errSecMissingEntitlement`.
-The nonpersistent CryptoKit Enclave key works without an Apple Developer Team;
-a synthetic private-key operation with interaction forbidden was denied by
-LocalAuthentication. There is no fallback to ordinary Keychain storage protected
-only by a software authentication check.
+The temporary biometric Secure Enclave private key protects the in-memory cache.
+KeeLocker creates no persistent Keychain item and has no fallback to ordinary
+Keychain storage protected only by a software authentication check. Local builds
+use the nonpersistent CryptoKit Enclave key without requiring an Apple Developer
+Team. Native biometric verification must exercise the protected private-key
+operation itself; a successful software authentication prompt is insufficient.
 
 Apple API references: [Secure Enclave key agreement](https://developer.apple.com/documentation/cryptokit/secureenclave/p256/keyagreement/privatekey),
 [restoring the wrapped key with an authentication context](https://developer.apple.com/documentation/cryptokit/secureenclave/p256/keyagreement/privatekey/init(datarepresentation:authenticationcontext:)),
@@ -104,11 +98,21 @@ Apple API references: [Secure Enclave key agreement](https://developer.apple.com
   Each unlocked window owns its registration token. Credential/recovery failures
   invalidate only that token; cancellation never removes a replacement cache.
   Recovery rechecks that token after KDBX opening, closing a revoked repository
-  session before it can publish decrypted entries.
+  session before it can publish decrypted entries. It also compares the returned
+  snapshot's already-canonical file path with the captured registration identity;
+  resolving the original URL again cannot verify which file was actually opened.
+  Rust binds that identity to the descriptor used for reading, checking its
+  native path before and after the read. A retargeted canonical path is rejected
+  even if it is restored before the Swift callback.
+  A mismatched opened session is closed even if the original symlink is restored
+  before the callback.
   Completion releases native cancellation bookkeeping, including requests
   cancelled before native authentication begins or after it finishes.
 - External credential changes invalidate cached material when detected. A stale
   cache cannot decrypt changed KDBX; the user must unlock with current credentials.
+  Installing file observation schedules an initial refresh to detect changes
+  during enrollment. Drafts, busy operations and unsaved edits defer that refresh
+  through the normal store rules.
 - Key-file components are included in the session cache. The physical key file
   need not remain connected for Quick Unlock; it is needed again after Quit.
 - Native crypto, KDBX opening and key export run outside the main actor. No secret

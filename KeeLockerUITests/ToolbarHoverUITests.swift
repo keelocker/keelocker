@@ -266,7 +266,7 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertLessThan(listTitle.frame.maxX, sortButton.frame.minX)
     }
 
-    func testListTitleClearsSidebarToggleWhenSidebarIsHidden() {
+    func testListTitleClearsSidebarToggleWhenSidebarIsHidden() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--demo-vault"]
         app.launch()
@@ -290,7 +290,7 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertLessThan(listTitle.frame.maxX, sortButton.frame.minX)
         XCTAssertEqual(listTitle.frame.midY, sortButton.frame.midY, accuracy: 1)
 
-        let detailSplitter = app.splitters.firstMatch
+        let detailSplitter = try visibleListDivider(in: app)
         XCTAssertTrue(detailSplitter.waitForExistence(timeout: 3))
         let trailingInset = assertActionsAlignToTrailingEdge(in: app, splitter: detailSplitter)
         resizeColumn(using: detailSplitter)
@@ -357,7 +357,7 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertEqual(splitter.frame.midX - window.frame.minX, originalDividerOffset, accuracy: 1)
     }
 
-    func testDraggingListDividerInTitlebarWhenSidebarIsHidden() {
+    func testDraggingListDividerInTitlebarWhenSidebarIsHidden() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--demo-vault"]
         app.launch()
@@ -368,7 +368,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
         assertTitlebarDividerResizesColumnWithoutMovingWindow(
             in: app,
-            splitter: app.splitters.firstMatch
+            splitter: try visibleListDivider(in: app)
         )
     }
 
@@ -441,6 +441,21 @@ final class ToolbarHoverUITests: XCTestCase {
 
         end.press(forDuration: 0.1, thenDragTo: end.withOffset(CGVector(dx: 30, dy: 0)))
         XCTAssertGreaterThan(window.frame.minX, initialWindowFrame.minX + 20)
+    }
+
+    private func visibleListDivider(in app: XCUIApplication) throws -> XCUIElement {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.splitters.firstMatch.waitForExistence(timeout: 3))
+        // AppKit can retain the collapsed sidebar divider in AX at the window
+        // edge. The list/detail divider is the rightmost interior divider.
+        let interior = app.splitters.allElementsBoundByIndex.filter {
+            let frame = $0.frame
+            return frame.height > 0 && frame.midX > window.frame.minX + 20
+                && frame.midX < window.frame.maxX - 20
+        }
+        return try XCTUnwrap(interior.max { $0.frame.midX < $1.frame.midX },
+                             "No visible list/detail divider inside the window")
     }
 
     private func assertTitlebarDividerResizesColumnWithoutMovingWindow(

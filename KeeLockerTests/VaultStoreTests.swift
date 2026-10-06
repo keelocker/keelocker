@@ -3,6 +3,60 @@ import XCTest
 
 @MainActor
 final class VaultStoreTests: XCTestCase {
+    func testCappedHistoryInvalidatesInspectionWhenCountAndTimestampStayTheSame() async throws {
+        let repository = CappedHistoryRepository()
+        let store = VaultStore()
+        store.use(repository)
+        store.unlock()
+        await store.waitForUnlock()
+        let id = repository.vault.entries[0].id
+        store.inspectedEntryID = id
+        let original = try await store.history(id)
+        let revision = store.snapshotRevision
+        XCTAssertEqual(original.map(\.title), ["Synthetic v0"])
+        store.run(.putAttachment(id, "synthetic.bin", Data([1, 2, 3])))
+        await store.waitForOperation()
+        let replacement = try await store.history(id)
+        XCTAssertEqual(store.items.first?.historyCount, 1)
+        XCTAssertEqual(replacement.count, original.count)
+        XCTAssertEqual(replacement.first?.modifiedAt, original.first?.modifiedAt)
+        XCTAssertEqual(replacement.map(\.title), ["Synthetic v1"])
+        XCTAssertNotEqual(store.snapshotRevision, revision,
+                          "An open history sheet must reload when a capped version is replaced")
+        store.lock()
+    }
+
+    func testSupersededPasswordLoadReturnsToLockedWithoutAFileError() async throws {
+        let repository = SuspendedRepository()
+        let store = VaultStore()
+        store.use(repository)
+        store.unlock(password: "synthetic-password")
+        while repository.continuation == nil { await Task.yield() }
+        repository.continuation?.resume(throwing: CancellationError())
+        await store.waitForUnlock()
+        XCTAssertEqual(store.state, .locked)
+        XCTAssertNil(store.failure)
+        XCTAssertTrue(store.items.isEmpty)
+    }
+
+    func testInitialRefreshKeepsEditingBlockedUntilUnchangedSelectedDetailsAreReady() async throws {
+        let repository = InitialSelectionRepository()
+        let store = VaultStore()
+        store.use(repository, fileURL: URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx"))
+        store.unlock()
+        while repository.selection == nil || repository.refreshes == 0 { await Task.yield() }
+        XCTAssertTrue(store.isBusy, "An unchanged refresh must still wait for initial selected details")
+        store.run(.save)
+        XCTAssertEqual(repository.commands, 0)
+        repository.selection?.resume(returning: repository.entry)
+        await store.waitForUnlock()
+        await store.waitForOperation()
+        XCTAssertEqual(repository.commands, 0)
+        XCTAssertFalse(store.isBusy)
+        XCTAssertEqual(store.selectedEntry?.id, store.selectedItemID)
+        store.lock()
+    }
+
     func testDelayedCommandCannotMutateAReplacementSession() async throws {
         let store = VaultStore(items: MockVault.items)
         let request = store.sessionID
@@ -948,6 +1002,386 @@ final class KdbxIntegrationTests: XCTestCase {
 }
 
 @MainActor
+final class VaultSaveWarningTests: XCTestCase {
+    func testSaveWriteFailureAdoptsDirtySnapshotAndRetryClearsWarning() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("source.kdbx")
+        try Data("synthetic source".utf8).write(to: source)
+        let native = DirectorySyncWarningVault(path: source.path)
+        let repository = RustVaultRepository(url: source, opening: FixedVaultOpening(vault: native))
+        let store = VaultStore()
+        store.use(repository, fileURL: source)
+        store.unlock(password: "synthetic")
+        await store.waitForUnlock()
+        defer { store.lock() }
+        let originalRefreshes = native.refreshes
+        store.run(.save)
+        await store.waitForOperation()
+        XCTAssertEqual(store.operationFailure, .writeFailed)
+        XCTAssertTrue(store.isDirty, "Adopt Rust's durability-warning snapshot")
+        store.refreshFromDisk()
+        await store.waitForRefresh()
+        XCTAssertEqual(native.refreshes, originalRefreshes, "Keep refresh deferred while durability is uncertain")
+        store.run(.save)
+        await store.waitForOperation()
+        XCTAssertFalse(store.isDirty)
+        XCTAssertNil(store.operationFailure)
+    }
+
+    func testCommittedSaveAsWriteFailureAdoptsDestinationAndMovesMonitoring() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sourceDirectory = directory.appendingPathComponent("source")
+        let destinationDirectory = directory.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        let source = sourceDirectory.appendingPathComponent("source.kdbx")
+        let destination = destinationDirectory.appendingPathComponent("copy.kdbx")
+        let original = Data("synthetic source".utf8)
+        try original.write(to: source)
+        let native = DirectorySyncWarningVault(path: source.path)
+        let repository = RustVaultRepository(url: source, opening: FixedVaultOpening(vault: native))
+        let store = VaultStore()
+        store.use(repository, fileURL: source)
+        store.unlock(password: "synthetic")
+        await store.waitForUnlock()
+        defer { store.lock() }
+        store.run(.saveAs(destination))
+        await store.waitForOperation()
+        XCTAssertEqual(store.operationFailure, .writeFailed)
+        XCTAssertTrue(store.isDirty)
+        XCTAssertEqual(store.fileURL?.path, destination.resolvingSymlinksInPath().standardizedFileURL.path)
+        XCTAssertEqual(try Data(contentsOf: source), original)
+        store.run(.save)
+        await store.waitForOperation()
+        XCTAssertNil(store.operationFailure)
+        XCTAssertFalse(store.isDirty)
+        // The directories differ: a watcher left at the original path cannot
+        // observe this write. No explicit refresh call is made here.
+        try DirectorySyncWarningVault.externalBytes.write(to: destination, options: .atomic)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while store.vaultName != "Externally refreshed destination", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(store.vaultName, "Externally refreshed destination")
+        XCTAssertEqual(store.fileURL?.path, destination.resolvingSymlinksInPath().standardizedFileURL.path)
+    }
+
+    func testUncommittedSaveAsWriteFailureKeepsOriginalPathAndCleanState() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("source.kdbx")
+        let destination = directory.appendingPathComponent("copy.kdbx")
+        try Data("synthetic source".utf8).write(to: source)
+        let native = DirectorySyncWarningVault(path: source.path, failBeforeCommit: true)
+        let repository = RustVaultRepository(url: source, opening: FixedVaultOpening(vault: native))
+        let store = VaultStore()
+        store.use(repository, fileURL: source)
+        store.unlock(password: "synthetic")
+        await store.waitForUnlock()
+        defer { store.lock() }
+        store.run(.saveAs(destination))
+        await store.waitForOperation()
+        XCTAssertEqual(store.operationFailure, .writeFailed)
+        XCTAssertFalse(store.isDirty)
+        XCTAssertEqual(store.fileURL?.path, source.resolvingSymlinksInPath().standardizedFileURL.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    private func temporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+}
+
+private struct FixedVaultOpening: RustVaultOpening {
+    let vault: CoreVault
+    func open(path: String, password: String, keyFile: String?) throws -> CoreVault { vault }
+    func open(path: String, keyMaterial: Data) throws -> CoreVault { vault }
+}
+
+/// Implements the Rust post-commit WriteFailed contract without crypto or fault
+/// injection into unrelated filesystem operations. Files contain synthetic bytes.
+private final class DirectorySyncWarningVault: CoreVault, @unchecked Sendable {
+    static let externalBytes = Data("synthetic external change".utf8)
+    private let mutex = NSLock()
+    private var path: String
+    private var dirty = false
+    private var name = "Synthetic save-warning vault"
+    private var warnOnSave = true
+    private var refreshCount = 0
+    private let failBeforeCommit: Bool
+    init(path: String, failBeforeCommit: Bool = false) {
+        self.path = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        self.failBeforeCommit = failBeforeCommit
+        super.init(noHandle: NoHandle())
+    }
+    required init(unsafeFromHandle handle: UInt64) { fatalError("Synthetic sessions have no native handle") }
+    var refreshes: Int {
+        mutex.lock()
+        defer { mutex.unlock() }
+        return refreshCount
+    }
+    override func snapshot() throws -> CoreSnapshot {
+        mutex.lock()
+        defer { mutex.unlock() }
+        return CoreSnapshot(info: CoreVaultInfo(name: name, path: path, dirty: dirty, rootId: UUID().uuidString),
+                            groups: [], entries: [])
+    }
+    override func save() throws {
+        mutex.lock()
+        defer { mutex.unlock() }
+        if warnOnSave {
+            warnOnSave = false
+            dirty = true
+            throw CoreError.WriteFailed
+        }
+        dirty = false
+    }
+    override func saveAs(path: String) throws {
+        mutex.lock()
+        defer { mutex.unlock() }
+        guard !failBeforeCommit else { throw CoreError.WriteFailed }
+        let destination = URL(fileURLWithPath: path)
+        try Data("synthetic committed copy".utf8).write(to: destination, options: .atomic)
+        self.path = destination.resolvingSymlinksInPath().standardizedFileURL.path
+        dirty = true
+        warnOnSave = false
+        throw CoreError.WriteFailed
+    }
+    override func reloadIfChanged() throws -> Bool {
+        mutex.lock()
+        defer { mutex.unlock() }
+        refreshCount += 1
+        guard try Data(contentsOf: URL(fileURLWithPath: path)) == Self.externalBytes,
+              name != "Externally refreshed destination" else { return false }
+        name = "Externally refreshed destination"
+        return true
+    }
+    override func lock() {}
+}
+
+@MainActor
+final class VaultLoadAdmissionTests: XCTestCase {
+    func testAlreadyCancelledLoadCannotSupersedeTheAdaptersActiveOpen() async throws {
+        let admission = VaultLoadAdmission()
+        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx")
+        let gate = SynchronousLoadGate()
+        defer { gate.release() }
+        let repository = RustVaultRepository(url: url, loadAdmission: admission,
+                                             opening: SyntheticVaultOpening(path: url.path, openGate: gate))
+        defer { repository.lock() }
+        let activeLoad = Task { try await repository.load(password: "synthetic", keyFile: nil) }
+        try await reached { gate.entered }
+        let cancelledLoad = Task { try await repository.load(password: "cancelled-synthetic", keyFile: nil) }
+        cancelledLoad.cancel() // Cancel before this main-actor task can enter the adapter.
+        do { _ = try await cancelledLoad.value; XCTFail("An already cancelled request was accepted") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        gate.release()
+        let vault = try await activeLoad.value
+        XCTAssertEqual(vault.name, "Synthetic admitted vault")
+    }
+
+    func testCancelledOpenHoldsAdmissionThroughLateSessionLockAndOtherVaultCanOpen() async throws {
+        let admission = VaultLoadAdmission()
+        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx")
+        let openGate = SynchronousLoadGate()
+        let lockGate = SynchronousLoadGate()
+        defer { openGate.release(); lockGate.release() }
+        let oldOpening = SyntheticVaultOpening(path: url.path, openGate: openGate, lockGate: lockGate)
+        let oldRepository = RustVaultRepository(url: url, loadAdmission: admission, opening: oldOpening)
+        let oldLoad = Task { try await oldRepository.load(password: "synthetic", keyFile: nil) }
+        try await reached { openGate.entered }
+        oldLoad.cancel()
+        oldRepository.lock()
+
+        let latestOpening = SyntheticVaultOpening(path: url.path)
+        let latestRepository = RustVaultRepository(url: url, loadAdmission: admission, opening: latestOpening)
+        defer { latestRepository.lock() }
+        let latestLoad = Task { try await latestRepository.load(keyMaterial: Data(repeating: 1, count: 36)) }
+        try await reached { admission.queuedRequest(for: url) != nil }
+        XCTAssertFalse(latestOpening.openGate.entered, "Cancelling a running synchronous call must not release its slot")
+
+        let otherURL = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx")
+        let otherOpening = SyntheticVaultOpening(path: otherURL.path)
+        let otherRepository = RustVaultRepository(url: otherURL, loadAdmission: admission, opening: otherOpening)
+        _ = try await otherRepository.load(password: "synthetic", keyFile: nil)
+        otherRepository.lock()
+        XCTAssertTrue(otherOpening.openGate.entered, "Unrelated vaults must not wait behind this KDF")
+
+        openGate.release()
+        try await reached { lockGate.entered }
+        XCTAssertFalse(latestOpening.openGate.entered, "Keep admission until the rejected session is actually closed")
+        lockGate.release()
+        do { _ = try await oldLoad.value; XCTFail("A cancelled open was published") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        let vault = try await latestLoad.value
+        XCTAssertEqual(vault.fileURL?.path, url.resolvingSymlinksInPath().standardizedFileURL.path)
+        XCTAssertTrue(latestOpening.openGate.entered)
+    }
+
+    func testRetriesAcrossAdaptersAndAliasesKeepOnlyLatestQueuedOpen() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("synthetic.kdbx")
+        let alias = directory.appendingPathComponent("alias.kdbx")
+        try Data("synthetic admission identity".utf8).write(to: url)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: url)
+        // Use the production shared coordinator across successive repository instances.
+        let admission = VaultLoadAdmission.shared
+        let gate = SynchronousLoadGate()
+        defer { gate.release() }
+        let activeRepository = RustVaultRepository(url: url, opening: SyntheticVaultOpening(path: url.path, openGate: gate))
+        defer { activeRepository.lock() }
+        let activeLoad = Task { try await activeRepository.load(password: "synthetic", keyFile: nil) }
+        try await reached { gate.entered }
+
+        let obsoleteOpening = SyntheticVaultOpening(path: url.path)
+        let obsoleteRepository = RustVaultRepository(url: alias, opening: obsoleteOpening)
+        let obsoleteLoad = Task { try await obsoleteRepository.load(password: "obsolete-synthetic", keyFile: nil) }
+        try await reached { admission.queuedRequest(for: url) != nil }
+        let obsoleteRequest = try XCTUnwrap(admission.queuedRequest(for: url))
+        let latestOpening = SyntheticVaultOpening(path: url.path)
+        let latestRepository = RustVaultRepository(url: url, opening: latestOpening)
+        defer { latestRepository.lock() }
+        let latestLoad = Task { try await latestRepository.load(password: "latest-synthetic", keyFile: nil) }
+        try await reached { admission.queuedRequest(for: url)?.id != obsoleteRequest.id }
+        do { _ = try await obsoleteLoad.value; XCTFail("An obsolete queued retry was admitted") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertFalse(obsoleteOpening.openGate.entered)
+        XCTAssertFalse(latestOpening.openGate.entered)
+        gate.release()
+        _ = try await activeLoad.value
+        _ = try await latestLoad.value
+        XCTAssertTrue(latestOpening.openGate.entered)
+    }
+
+    func testCancellingOrLockingAQueuedRepositoryNeverStartsItsOpen() async throws {
+        for cancelTask in [false, true] {
+            let admission = VaultLoadAdmission()
+            let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx")
+            let gate = SynchronousLoadGate()
+            defer { gate.release() }
+            let activeRepository = RustVaultRepository(url: url, loadAdmission: admission,
+                                                      opening: SyntheticVaultOpening(path: url.path, openGate: gate))
+            let activeLoad = Task { try await activeRepository.load(password: "synthetic", keyFile: nil) }
+            try await reached { gate.entered }
+            let queuedOpening = SyntheticVaultOpening(path: url.path)
+            let queuedRepository = RustVaultRepository(url: url, loadAdmission: admission, opening: queuedOpening)
+            let queuedLoad = Task { try await queuedRepository.load(password: "synthetic", keyFile: nil) }
+            try await reached { admission.queuedRequest(for: url) != nil }
+            if cancelTask { queuedLoad.cancel() } else { queuedRepository.lock() }
+            do { _ = try await queuedLoad.value; XCTFail("A cancelled queued request was admitted") }
+            catch { XCTAssertTrue(error is CancellationError) }
+            XCTAssertNil(admission.queuedRequest(for: url))
+            XCTAssertFalse(queuedOpening.openGate.entered)
+            gate.release()
+            _ = try await activeLoad.value
+            activeRepository.lock()
+        }
+    }
+
+    private func reached(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !condition(), ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertTrue(condition(), "The source gate was not reached")
+        if !condition() { throw CancellationError() }
+    }
+}
+
+/// Models a synchronous FFI call that ignores Swift task cancellation.
+private final class SynchronousLoadGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var released: Bool
+    private var didEnter = false
+    init(released: Bool = false) { self.released = released }
+    var entered: Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return didEnter
+    }
+    func wait() {
+        condition.lock()
+        didEnter = true
+        while !released { condition.wait() }
+        condition.unlock()
+    }
+    func release() {
+        condition.lock()
+        released = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
+private struct SyntheticVaultOpening: RustVaultOpening {
+    let path: String
+    let openGate: SynchronousLoadGate
+    let lockGate: SynchronousLoadGate
+    init(path: String, openGate: SynchronousLoadGate = SynchronousLoadGate(released: true),
+         lockGate: SynchronousLoadGate = SynchronousLoadGate(released: true)) {
+        self.path = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        self.openGate = openGate
+        self.lockGate = lockGate
+    }
+    func open(path: String, password: String, keyFile: String?) throws -> CoreVault { try open(path: path) }
+    func open(path: String, keyMaterial: Data) throws -> CoreVault { try open(path: path) }
+    private func open(path: String) throws -> CoreVault {
+        guard path == self.path else { throw VaultFailure.failedToReadFile }
+        openGate.wait()
+        return SyntheticOpenedVault(path: path, lockGate: lockGate)
+    }
+}
+
+private final class SyntheticOpenedVault: CoreVault, @unchecked Sendable {
+    private let path: String
+    private let lockGate: SynchronousLoadGate
+    init(path: String, lockGate: SynchronousLoadGate) {
+        self.path = path
+        self.lockGate = lockGate
+        super.init(noHandle: NoHandle())
+    }
+    required init(unsafeFromHandle handle: UInt64) { fatalError("Synthetic sessions have no native handle") }
+    override func snapshot() throws -> CoreSnapshot {
+        CoreSnapshot(info: CoreVaultInfo(name: "Synthetic admitted vault", path: path, dirty: false, rootId: UUID().uuidString),
+                     groups: [], entries: [])
+    }
+    override func lock() { lockGate.wait() }
+}
+
+@MainActor
+private final class CappedHistoryRepository: VaultRepository {
+    let capabilities = VaultCapabilities.persistent
+    let requiresPassword = false
+    var vault: Vault
+    var version: VaultEntry
+
+    init() {
+        var entry = MockVault.items[0]
+        entry.title = "Synthetic v1"
+        entry.historyCount = 1
+        entry.modifiedAt = Date(timeIntervalSince1970: 1_000)
+        vault = Vault(name: "Synthetic capped history", groups: [entry.group], entries: [entry])
+        version = entry
+        version.title = "Synthetic v0"
+    }
+
+    func load(password: String, keyFile: URL?) async throws -> Vault { vault }
+    func execute(_ command: VaultCommand) async throws -> VaultCommandResult {
+        guard case .putAttachment(_, let name, let data) = command else { throw VaultFailure.invalidOperation }
+        version = vault.entries[0]
+        vault.entries[0].attachments = [AttachmentMetadata(name: name, size: UInt64(data.count))]
+        return VaultCommandResult(vault: vault)
+    }
+    func entry(_ id: UUID) async throws -> VaultEntry { vault.entries[0] }
+    func history(_ id: UUID) async throws -> [VaultEntry] { [version] }
+    func lock() {}
+}
+
+@MainActor
 private final class SuspendedSelectionRepository: VaultRepository {
     let capabilities = VaultCapabilities.editable
     let requiresPassword = false
@@ -961,7 +1395,12 @@ private final class SuspendedSelectionRepository: VaultRepository {
     func entry(_ id: UUID) async throws -> VaultEntry {
         if suspendsSelection {
             suspendedEntry = try await memory.entry(id)
-            return try await withCheckedThrowingContinuation { continuation = $0 }
+            return try await withCheckedThrowingContinuation {
+                // Selection may be requested again after reconciliation. Retire
+                // the fake's obsolete waiter instead of leaking its continuation.
+                continuation?.resume(throwing: CancellationError())
+                continuation = $0
+            }
         }
         return try await memory.entry(id)
     }
@@ -1024,5 +1463,25 @@ private final class SuspendedRefreshRepository: VaultRepository {
     }
     func refresh() async throws -> Vault? {
         try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+}
+
+@MainActor
+private final class InitialSelectionRepository: VaultRepository {
+    let capabilities = VaultCapabilities.persistent
+    let requiresPassword = false
+    private let memory = MemoryVaultRepository()
+    var selection: CheckedContinuation<VaultEntry, Never>?
+    private(set) var refreshes = 0
+    private(set) var commands = 0
+    var entry: VaultEntry { memory.vault.entries[0] }
+    func load(password: String, keyFile: URL?) async throws -> Vault { memory.vault }
+    func refresh() async throws -> Vault? { refreshes += 1; return nil }
+    func entry(_ id: UUID) async throws -> VaultEntry {
+        await withCheckedContinuation { selection = $0 }
+    }
+    func execute(_ command: VaultCommand) async throws -> VaultCommandResult {
+        commands += 1
+        throw VaultFailure.invalidOperation
     }
 }

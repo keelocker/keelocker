@@ -52,10 +52,3 @@ Depth comes from native background steps. The sidebar uses native material; tool
 ## 8. Responsive behavior
 
 `NavigationSplitView` supplies native column collapse and resizing. At the 980 by 680 pt minimum, the detail body tightens while action labels remain intact. At normal size, details stay left aligned within a capped reading width. All icon-only actions include accessibility labels.
-
-## 9. Agent prompt guide
-
-- Sidebar: "Build a macOS SwiftUI sidebar on native sidebar material, 38 pt rows, 10 pt radius, `#4B63D2` selected tint at 14 percent opacity, 16 pt horizontal padding, SF Symbols at 15 pt medium."
-- Item row: "Build a 72 pt password item row with a 40 pt icon tile at 10 pt radius, 14 pt semibold title, 12 pt secondary username, and a quiet 10 pt radius selected fill."
-- Credential group: "Build a grouped SwiftUI credential section on native text background, 14 pt outer radius, 12 pt row padding, 1 px adaptive separators, 16 pt leading icon column."
-- Primary action: "Build a 34 pt macOS action button with 9 pt radius, `#4B63D2` fill, white semibold 13 pt label, SF Symbol and a 0.96 press scale over 120 ms."

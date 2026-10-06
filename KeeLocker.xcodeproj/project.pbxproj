@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AE0000000000000000000001 /* ClipboardOwner.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000001; };
+		AE0000000000000000000002 /* ClipboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000002; };
+		AE0000000000000000000003 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000003; };
+		AE0000000000000000000004 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000004; };
 		A10000000000000000000001 /* KeeLockerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* KeeLockerApp.swift */; };
 		A10000000000000000000002 /* VaultItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* VaultItem.swift */; };
 		A10000000000000000000003 /* VaultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* VaultStore.swift */; };
@@ -51,6 +55,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		BE0000000000000000000001 /* ClipboardOwner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/macOS/ClipboardOwner.swift; sourceTree = SOURCE_ROOT; };
+		BE0000000000000000000002 /* ClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerTests/ClipboardTests.swift; sourceTree = SOURCE_ROOT; };
+		BE0000000000000000000003 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT; };
+		BE0000000000000000000004 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
 		B10000000000000000000001 /* KeeLockerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* VaultItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultItem.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* VaultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultStore.swift; sourceTree = "<group>"; };
@@ -115,6 +123,8 @@
 				D30000000000000000000001 /* KeeLockerUITests */,
 				B1000000000000000000000A /* DESIGN.md */,
 				B1000000000000000000000B /* README.md */,
+				BE0000000000000000000003 /* LICENSE */,
+				BE0000000000000000000004 /* THIRD_PARTY_NOTICES.md */,
 				D10000000000000000000007 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -127,6 +137,7 @@
 				BC0000000000000000000002,
 				BD0000000000000000000000,
 				BD0000000000000000000001,
+				BE0000000000000000000001 /* ClipboardOwner.swift */,
 				BB0000000000000000000000,
 				BB0000000000000000000001,
 				BB0000000000000000000002,
@@ -195,6 +206,7 @@
 			children = (
 				B20000000000000000000001 /* VaultStoreTests.swift */,
 				BD0000000000000000000002,
+				BE0000000000000000000002 /* ClipboardTests.swift */,
 			);
 			path = KeeLockerTests;
 			sourceTree = "<group>";
@@ -317,6 +329,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AE0000000000000000000003 /* LICENSE in Resources */,
+				AE0000000000000000000004 /* THIRD_PARTY_NOTICES.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -349,6 +363,7 @@
 				AB0000000000000000000002,
 				AD0000000000000000000000,
 				AD0000000000000000000001,
+				AE0000000000000000000001 /* ClipboardOwner.swift in Sources */,
 				AA0000000000000000000000,
 				AA0000000000000000000001,
 				AA0000000000000000000002,
@@ -375,6 +390,7 @@
 			files = (
 				A20000000000000000000001 /* VaultStoreTests.swift in Sources */,
 				AD0000000000000000000002,
+				AE0000000000000000000002 /* ClipboardTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -11,7 +11,7 @@ use crate::{
     crypt::{ciphers::Cipher, CryptographyError},
     db::{AttachmentId, Color, EntryId, EntryMut, GroupId},
     format::xml_db::{
-        custom_serde::{cs_bool, cs_opt_bool, cs_opt_fromstr, cs_opt_string},
+        custom_serde::{cs_bool, cs_opt_bool, cs_opt_fromstr, cs_opt_string, cs_opt_text},
         meta::CustomData,
         tags::split_tags,
         times::Times,
@@ -57,7 +57,7 @@ pub struct Entry {
     #[serde(
         default,
         rename = "OverrideURL",
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         skip_serializing_if = "Option::is_none"
     )]
     pub override_url: Option<String>,
@@ -298,10 +298,10 @@ pub struct StringValue {
     #[serde(
         default,
         rename = "$value",
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         skip_serializing_if = "Option::is_none"
     )]
-    value: Option<String>,
+    pub(super) value: Option<String>,
 }
 
 impl Serialize for StringValue {
@@ -362,7 +362,7 @@ pub struct AutoType {
 
     #[serde(
         default,
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         skip_serializing_if = "Option::is_none"
     )]
     pub default_sequence: Option<String>,

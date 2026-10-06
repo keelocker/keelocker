@@ -36,9 +36,12 @@ pub fn parse_xml(
     header_attachments: &[Value<Vec<u8>>],
     inner_decryptor: &mut dyn Cipher,
 ) -> Result<crate::db::Database, ParseXmlError> {
-    let kdbx: KeePassFile = quick_xml::de::from_reader(data)?;
+    let mut kdbx: KeePassFile = quick_xml::de::from_reader(data)?;
+    whitespace::restore(data, &mut kdbx.root.group)?;
     Ok(kdbx.xml_to_db(inner_decryptor, header_attachments)?)
 }
+
+mod whitespace;
 
 /// Errors that can occur during parsing of the inner XML database of a KDBX file
 #[derive(Debug, Error)]

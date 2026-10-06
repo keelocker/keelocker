@@ -8,7 +8,7 @@ use keepass::{
     Database, DatabaseKey,
 };
 use std::{
-    fs::{self, File},
+    fs::File,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -26,7 +26,7 @@ struct Session {
 
 impl Session {
     fn reload(&mut self, discard_changes: bool) -> Result<bool, CoreError> {
-        let bytes = fs::read(&self.path).map_err(|_| CoreError::ReadFailed)?;
+        let bytes = io::read_canonical(&self.path)?;
         let hash = io::digest(&bytes);
         if !discard_changes && hash == self.hash {
             return Ok(false);
@@ -60,7 +60,7 @@ impl Session {
             .ok();
     }
 
-    fn save_to(&mut self, path: &Path, expected: Option<[u8; 32]>) -> Result<[u8; 32], CoreError> {
+    fn save_to(&mut self, path: &Path, expected: Option<[u8; 32]>) -> Result<(), CoreError> {
         let prepared = self
             .next_save
             .take()
@@ -69,7 +69,15 @@ impl Session {
         let result =
             prepared.and_then(|prepared| io::save(&self.db, &self.key, path, expected, prepared));
         self.prepare_next_save();
-        result
+        let outcome = result?;
+        self.path = outcome.path;
+        self.hash = outcome.hash;
+        self.dirty = !outcome.directory_synced;
+        if outcome.directory_synced {
+            Ok(())
+        } else {
+            Err(CoreError::WriteFailed)
+        }
     }
 }
 
@@ -414,21 +422,13 @@ impl CoreVault {
     }
 
     pub fn save(&self) -> Result<(), CoreError> {
-        self.with(|s| {
-            s.hash = s.save_to(&s.path.clone(), Some(s.hash))?;
-            s.dirty = false;
-            Ok(())
-        })
+        self.with(|s| s.save_to(&s.path.clone(), Some(s.hash)))
     }
 
     pub fn save_as(&self, path: String) -> Result<(), CoreError> {
         self.with(|s| {
             let path = io::canonical_destination(Path::new(&path))?;
-            let hash = s.save_to(&path, if path == s.path { Some(s.hash) } else { None })?;
-            s.path = path;
-            s.hash = hash;
-            s.dirty = false;
-            Ok(())
+            s.save_to(&path, if path == s.path { Some(s.hash) } else { None })
         })
     }
 }
@@ -491,4 +491,243 @@ fn apply_edit(db: &mut Database, id: EntryId, edit: CoreEntryEdit) -> Result<(),
         .collect();
     track.times.last_modification = Some(Times::now());
     Ok(())
+}
+
+#[cfg(test)]
+mod persistence_recovery_tests {
+    use super::*;
+    use keepass::config::KdfConfig;
+    use std::fs;
+
+    const PASSWORD: &str = "synthetic-recovery-password";
+
+    fn path(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    fn open(path: &Path) -> Arc<CoreVault> {
+        CoreVault::open(self::path(path), PASSWORD.into(), None).unwrap()
+    }
+
+    fn source(path: &Path) -> Arc<CoreVault> {
+        let mut db = Database::new();
+        db.config.kdf_config = KdfConfig::Aes { rounds: 10 };
+        db.root_mut()
+            .add_entry()
+            .set_unprotected("Title", "original");
+        db.save(
+            &mut File::create(path).unwrap(),
+            DatabaseKey::new().with_password(PASSWORD),
+        )
+        .unwrap();
+        open(path)
+    }
+
+    fn edit(vault: &CoreVault, title: &str) {
+        let id = vault.snapshot().unwrap().entries[0].id.clone();
+        vault
+            .update_entry(
+                id,
+                CoreEntryEdit {
+                    title: title.into(),
+                    username: String::new(),
+                    password: "synthetic".into(),
+                    url: String::new(),
+                    notes: String::new(),
+                    tags: vec![],
+                    custom_fields: vec![],
+                },
+            )
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_path_retargeted_before_read_cannot_open_another_vault() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.kdbx");
+        let second = dir.path().join("second.kdbx");
+        let parked = dir.path().join("parked.kdbx");
+        source(&first).lock();
+        let other = source(&second);
+        edit(&other, "other vault with the same credentials");
+        other.save().unwrap();
+        other.lock();
+        // This is the boundary between open_key's canonicalization and load.
+        let canonical = first.canonicalize().unwrap();
+        fs::rename(&first, &parked).unwrap();
+        symlink(&second, &first).unwrap();
+        let loaded = io::load(&canonical, &DatabaseKey::new().with_password(PASSWORD));
+        assert!(
+            matches!(loaded, Err(CoreError::ReadFailed)),
+            "A resolved path must not publish bytes from a different canonical file"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retargeted_reload_preserves_the_original_session_and_local_edit() {
+        use std::os::unix::fs::symlink;
+
+        for discard_changes in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let first = dir.path().join("first.kdbx");
+            let second = dir.path().join("second.kdbx");
+            let parked = dir.path().join("parked.kdbx");
+            let vault = source(&first);
+            let other = source(&second);
+            edit(&other, "other vault with the same credentials");
+            other.save().unwrap();
+            other.lock();
+            edit(&vault, "local unsaved edit");
+            fs::rename(&first, &parked).unwrap();
+            symlink(&second, &first).unwrap();
+            let result = if discard_changes {
+                vault.reload().map(|_| false)
+            } else {
+                vault.reload_if_changed()
+            };
+            assert_eq!(result, Err(CoreError::ReadFailed));
+            assert_eq!(
+                vault.snapshot().unwrap().entries[0].title,
+                "local unsaved edit"
+            );
+            assert!(vault.snapshot().unwrap().info.dirty);
+            fs::remove_file(&first).unwrap();
+            fs::rename(&parked, &first).unwrap();
+            vault.save().unwrap();
+            assert_eq!(
+                open(&first).snapshot().unwrap().entries[0].title,
+                "local unsaved edit"
+            );
+            assert_eq!(
+                open(&second).snapshot().unwrap().entries[0].title,
+                "other vault with the same credentials"
+            );
+        }
+    }
+
+    #[test]
+    fn directory_sync_failure_retains_warning_and_allows_save_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("source.kdbx");
+        let vault = source(&source_path);
+        let original = fs::read(&source_path).unwrap();
+        edit(&vault, "local edit");
+        assert_eq!(
+            io::with_directory_sync_failure(|| vault.save()),
+            Err(CoreError::WriteFailed)
+        );
+        assert!(vault.snapshot().unwrap().info.dirty);
+        assert_eq!(
+            open(&source_path).snapshot().unwrap().entries[0].title,
+            "local edit"
+        );
+        assert_eq!(
+            fs::read(source_path.with_extension("kdbx.bak")).unwrap(),
+            original
+        );
+        assert_eq!(vault.reload_if_changed(), Ok(false));
+
+        // Another failed sync must advance the accepted hash again, retaining the warning.
+        assert_eq!(
+            io::with_directory_sync_failure(|| vault.save()),
+            Err(CoreError::WriteFailed)
+        );
+        assert!(vault.snapshot().unwrap().info.dirty);
+        vault.save().unwrap();
+        assert!(!vault.snapshot().unwrap().info.dirty);
+        assert_eq!(vault.reload_if_changed(), Ok(false));
+    }
+
+    #[test]
+    fn directory_sync_failure_adopts_save_as_destination_and_allows_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("source.kdbx");
+        let copy_path = dir.path().join("copy.kdbx");
+        let vault = source(&source_path);
+        let original = fs::read(&source_path).unwrap();
+        edit(&vault, "copied edit");
+        assert_eq!(
+            io::with_directory_sync_failure(|| vault.save_as(path(&copy_path))),
+            Err(CoreError::WriteFailed)
+        );
+        assert_eq!(
+            vault.snapshot().unwrap().info.path,
+            path(&copy_path.canonicalize().unwrap())
+        );
+        assert!(vault.snapshot().unwrap().info.dirty);
+        assert_eq!(
+            open(&copy_path).snapshot().unwrap().entries[0].title,
+            "copied edit"
+        );
+        assert_eq!(fs::read(&source_path).unwrap(), original);
+        vault.save_as(path(&copy_path)).unwrap();
+        assert!(!vault.snapshot().unwrap().info.dirty);
+        edit(&vault, "later edit");
+        vault.save().unwrap();
+        assert_eq!(
+            open(&copy_path).snapshot().unwrap().entries[0].title,
+            "later edit"
+        );
+        assert_eq!(fs::read(&source_path).unwrap(), original);
+    }
+
+    #[test]
+    fn directory_sync_recovery_preserves_actual_external_changes() {
+        for save_as in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let source_path = dir.path().join("source.kdbx");
+            let copy_path = dir.path().join("copy.kdbx");
+            let destination = if save_as { &copy_path } else { &source_path };
+            let vault = source(&source_path);
+            edit(&vault, "local edit");
+            let save = || {
+                if save_as {
+                    vault.save_as(path(destination))
+                } else {
+                    vault.save()
+                }
+            };
+            assert_eq!(
+                io::with_directory_sync_failure(save),
+                Err(CoreError::WriteFailed)
+            );
+            let external = open(destination);
+            edit(&external, "external edit");
+            external.save().unwrap();
+            let external_bytes = fs::read(destination).unwrap();
+            assert_eq!(save(), Err(CoreError::Conflict));
+            assert_eq!(vault.save(), Err(CoreError::Conflict));
+            assert_eq!(vault.reload_if_changed(), Err(CoreError::Conflict));
+            assert!(vault.snapshot().unwrap().info.dirty);
+            assert_eq!(vault.snapshot().unwrap().entries[0].title, "local edit");
+            assert_eq!(fs::read(destination).unwrap(), external_bytes);
+            assert_eq!(
+                open(destination).snapshot().unwrap().entries[0].title,
+                "external edit"
+            );
+        }
+    }
+
+    #[test]
+    fn save_as_failure_before_commit_retains_original_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("source.kdbx");
+        let other_path = dir.path().join("other.kdbx");
+        let vault = source(&source_path);
+        let _other = source(&other_path);
+        let other_bytes = fs::read(&other_path).unwrap();
+        edit(&vault, "local edit");
+        assert_eq!(vault.save_as(path(&other_path)), Err(CoreError::Conflict));
+        assert_eq!(
+            vault.snapshot().unwrap().info.path,
+            path(&source_path.canonicalize().unwrap())
+        );
+        assert_eq!(fs::read(&other_path).unwrap(), other_bytes);
+        assert!(vault.snapshot().unwrap().info.dirty);
+        vault.save().unwrap();
+    }
 }

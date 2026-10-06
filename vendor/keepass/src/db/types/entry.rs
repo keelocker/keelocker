@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    convert::TryFrom,
     ops::{Deref, DerefMut},
 };
 
@@ -9,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     db::{
         attachment::{AttachmentMut, AttachmentRef},
-        fields, Attachment, AttachmentId, AutoType, Color, CustomDataItem, CustomIcon,
+        fields, Attachment, AttachmentId, AutoType, Color, CustomDataItem, CustomDataValue, CustomIcon,
         CustomIconId, CustomIconMut, CustomIconNotFoundError, CustomIconRef, GroupId, GroupMut,
         GroupRef, History, Icon, Times, Value,
     },
@@ -154,6 +155,45 @@ impl Entry {
     /// Convenience method for getting the raw value of the 'otp' field
     pub fn get_raw_otp_value(&self) -> Option<&str> {
         self.get(fields::OTP)
+    }
+
+    // HistoryMaxSize counts UTF-8 payload bytes, not compressed/encrypted file
+    // size. Charge each version/name for its binary even when storage is shared,
+    // matching KeePassXC's entry-size accounting. Do not copy protected values.
+    fn history_size(&self, attachments: &HashMap<AttachmentId, Attachment>) -> usize {
+        let mut size = 0usize;
+        for (name, value) in &self.fields {
+            size = size
+                .saturating_add(name.len())
+                .saturating_add(value.as_str().len());
+        }
+        for (name, id) in &self.attachments {
+            size = size.saturating_add(name.len()).saturating_add(
+                attachments
+                    .get(id)
+                    .map_or(0, |attachment| attachment.data.get().len()),
+            );
+        }
+        for tag in &self.tags {
+            size = size.saturating_add(tag.len());
+        }
+        if let Some(autotype) = &self.autotype {
+            for association in &autotype.associations {
+                size = size
+                    .saturating_add(association.window.len())
+                    .saturating_add(association.sequence.len());
+            }
+        }
+        for (name, item) in &self.custom_data {
+            let bytes = match &item.value {
+                Some(CustomDataValue::String(value)) => value.len(),
+                // Binary custom data is written as padded base64 text in XML.
+                Some(CustomDataValue::Binary(value)) => value.len().div_ceil(3).saturating_mul(4),
+                None => 0,
+            };
+            size = size.saturating_add(name.len()).saturating_add(bytes);
+        }
+        size
     }
 
     /// Convenience method for getting the value of the 'Title' field
@@ -892,12 +932,59 @@ impl DerefMut for EntryTrack<'_> {
 impl Drop for EntryTrack<'_> {
     fn drop(&mut self) {
         let entry_id = self.id;
+        let attachments = &self.database.attachments;
         // see if the entry is still there (it might have been removed)
         if let Some(entry) = self.database.entries.get_mut(&self.id) {
             let parent_id = entry.parent;
             let historical = std::mem::replace(&mut self.historical, Entry::new(parent_id));
 
-            entry.history.get_or_insert_default().add_entry(historical);
+            let history = entry.history.get_or_insert_default();
+            history.add_entry(historical);
+
+            // Only mutations enforce imported limits; opening/saving must not
+            // silently prune history. Zero disables it; negative/absent is unlimited.
+            let max_items = self
+                .database
+                .meta
+                .history_max_items
+                .and_then(|limit| usize::try_from(limit).ok())
+                .unwrap_or(usize::MAX);
+            let max_size = self
+                .database
+                .meta
+                .history_max_size
+                .and_then(|limit| usize::try_from(limit).ok());
+            let oversized = max_size.is_some_and(|limit| {
+                limit == 0 || history.entries.iter().fold(0usize, |size, version| {
+                    size.saturating_add(version.history_size(attachments))
+                }) > limit
+            });
+            if history.entries.len() > max_items || oversized {
+                // XML imports can use either order. When pruning, retain newest
+                // modification times; stable ties keep the new checkpoint first.
+                history.entries.sort_by_key(|version| {
+                    std::cmp::Reverse(version.times.last_modification)
+                });
+            }
+            let mut retained = 0;
+            let mut size = 0usize;
+            for version in history.entries.iter().take(max_items) {
+                if let Some(limit) = max_size {
+                    size = size.saturating_add(version.history_size(attachments));
+                    if limit == 0 || size > limit {
+                        break;
+                    }
+                }
+                retained += 1;
+            }
+            let mut discarded_attachments = HashSet::new();
+            let mut discarded_icons = HashSet::new();
+            for version in history.entries.drain(retained..) {
+                discarded_attachments.extend(version.attachments.values().copied());
+                if let Some(Icon::Custom(id)) = version.icon {
+                    discarded_icons.insert(id);
+                }
+            }
 
             // KeeLocker patch: a new history version shifts every history index.
             // Rebuild reverse references so editing attachments cannot discard
@@ -925,6 +1012,29 @@ impl Drop for EntryTrack<'_> {
                     if let Some(icon) = self.database.custom_icons.get_mut(id) {
                         icon.entries.insert((self.id, index));
                     }
+                }
+            }
+            // Reverse ownership is now valid for the retained history indices.
+            // Remove only discarded assets without current, historical, or group
+            // owners. Leave unrelated unreferenced database assets untouched.
+            for id in discarded_attachments {
+                if self
+                    .database
+                    .attachments
+                    .get(&id)
+                    .is_some_and(|a| a.entries.is_empty())
+                {
+                    self.database.attachments.remove(&id);
+                }
+            }
+            for id in discarded_icons {
+                if self
+                    .database
+                    .custom_icons
+                    .get(&id)
+                    .is_some_and(|i| i.entries.is_empty() && i.groups.is_empty())
+                {
+                    self.database.custom_icons.remove(&id);
                 }
             }
         }

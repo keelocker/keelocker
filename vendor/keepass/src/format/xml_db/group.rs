@@ -10,7 +10,7 @@ use crate::{
     crypt::ciphers::Cipher,
     db::{EntryId, GroupId},
     format::xml_db::{
-        custom_serde::{cs_opt_bool, cs_opt_fromstr, cs_opt_string},
+        custom_serde::{cs_opt_bool, cs_opt_fromstr, cs_opt_string, cs_opt_text},
         entry::{Entry, UnprotectError},
         tags::split_tags,
         times::Times,
@@ -28,7 +28,7 @@ pub struct Group {
 
     #[serde(
         default,
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         skip_serializing_if = "Option::is_none"
     )]
     pub notes: Option<String>,
@@ -63,7 +63,7 @@ pub struct Group {
 
     #[serde(
         default,
-        with = "cs_opt_string",
+        with = "cs_opt_text",
         skip_serializing_if = "Option::is_none"
     )]
     pub default_auto_type_sequence: Option<String>,

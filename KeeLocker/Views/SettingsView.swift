@@ -33,12 +33,12 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Storage", value: "In-memory demo")
+                LabeledContent("Storage", value: "Encrypted KDBX files")
                 LabeledContent("Version", value: appVersion)
             } header: {
                 Text("About this build")
             } footer: {
-                Text("KDBX, encryption, file access and synchronization are intentionally not included yet.")
+                Text("Open and edit existing KeePass vaults. Changes save automatically; an in-memory demo is also available.")
             }
         }
         .formStyle(.grouped)

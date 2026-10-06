@@ -1,0 +1,108 @@
+name: CI
+
+"on":
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.channel }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [msrv, stable]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve Rust toolchain from manifest
+        id: toolchain
+        env:
+          CHANNEL: ${{ matrix.channel }}
+        run: >-
+          awk -F '"' '/^rust-version = / { print "version=" (ENVIRON["CHANNEL"] == "stable" ? "stable" : $2); found = 1 } END { if (!found) exit 1 }'
+          crates/keelocker-core/Cargo.toml >> "$GITHUB_OUTPUT"
+      - name: Install Rust
+        run: rustup toolchain install '${{ steps.toolchain.outputs.version }}' --profile minimal --component rustfmt --component clippy
+      - name: Fetch locked dependency sources for notices
+        if: matrix.channel == 'stable'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
+        run: cargo fetch --locked
+      - name: Verify third-party notices
+        if: matrix.channel == 'stable'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
+        run: python3 scripts/generate-notices.py --check
+      - name: Locked Rust tests, including binding-generation feature
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
+        run: cargo test --locked -p keelocker-core --all-features
+      - name: Formatting
+        if: matrix.channel == 'stable'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        if: matrix.channel == 'stable'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
+        run: cargo clippy --locked -p keelocker-core --all-targets --all-features -- -D warnings
+
+  interoperability:
+    name: Independent KeePassXC interoperability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      KEEPASSXC_CLI: /usr/bin/keepassxc-cli
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Update package index
+        run: sudo apt-get update
+      - name: Install independent KeePassXC CLI
+        run: sudo apt-get install --no-install-recommends -y keepassxc
+      - name: Require KeePassXC CLI
+        run: /usr/bin/keepassxc-cli --version
+      - name: Include interoperability tests, exclude manual timings
+        run: cargo test --locked -p keelocker-core -- --include-ignored --skip save_timing --skip operation_timing
+
+  macos:
+    name: macOS build, Swift tests and generated bindings
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require selected Xcode
+        run: xcodebuild -version
+      - name: Install Rust and Apple Silicon target
+        run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin
+      - name: Compare generated bindings with exported API
+        run: bash scripts/check-bindings.sh
+      - name: Build macOS app
+        run: xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/keelocker-derived" build
+      - name: Swift unit and bridge tests
+        run: xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/keelocker-derived" -only-testing:KeeLockerTests test

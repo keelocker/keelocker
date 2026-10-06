@@ -16,6 +16,7 @@ final class VaultStore: ObservableObject {
     @Published var hasDraft = false { didSet { if !hasDraft { refreshIfNeeded() } } }
     @Published var inspectedEntryID: UUID? { didSet { if inspectedEntryID == nil { refreshIfNeeded() } } }
     @Published private(set) var editorGeneration = UUID()
+    @Published private(set) var snapshotRevision = UUID()
     @Published var sidebarSelection: SidebarSelection = .allItems
     @Published var searchQuery = ""
     @Published private(set) var state: VaultState = .noVault
@@ -221,6 +222,7 @@ final class VaultStore: ObservableObject {
         quickUnlock?.cancel(request: generation)
         quickUnlockRegistration = nil
         generation = UUID()
+        snapshotRevision = UUID()
         fileMonitor?.invalidate()
         fileMonitor = nil
         monitoredURL = nil
@@ -308,7 +310,7 @@ final class VaultStore: ObservableObject {
                 self.unlockTask = nil
             } catch {
                 guard !Task.isCancelled, let self, self.generation == request else { return }
-                self.state = .error((error as? VaultFailure) ?? .corruptedDatabase)
+                self.state = error is CancellationError ? .locked : .error((error as? VaultFailure) ?? .corruptedDatabase)
                 self.unlockTask = nil
             }
         }
@@ -330,7 +332,7 @@ final class VaultStore: ObservableObject {
                 guard !Task.isCancelled, let self, self.generation == request else { return }
                 let vault = try await repository.load(keyMaterial: material)
                 guard !Task.isCancelled, self.generation == request else { return }
-                guard quickUnlock.registration(for: url) == registration else {
+                guard registration.matchesOpenedVault(vault.fileURL), quickUnlock.isCurrent(registration) else {
                     repository.lock()
                     throw QuickUnlockFailure.missingKey
                 }
@@ -356,7 +358,7 @@ final class VaultStore: ObservableObject {
 
     func waitForUnlock() async {
         await unlockTask?.value
-        await selectionTask?.value
+        await waitForRefresh()
     }
 
     func run(_ command: VaultCommand, selectNew: Bool = false, session: UUID? = nil) {
@@ -435,8 +437,9 @@ final class VaultStore: ObservableObject {
                 if let vault {
                     self.apply(vault)
                     self.loadSelection(clearingCurrent: false)
-                    await self.selectionTask?.value
                 }
+                await self.selectionTask?.value
+                guard !Task.isCancelled, self.generation == request else { return }
                 self.lastRefreshFailure = nil
             } catch {
                 guard !Task.isCancelled, let self, self.generation == request else { return }
@@ -505,6 +508,7 @@ final class VaultStore: ObservableObject {
     }
 
     private func apply(_ vault: Vault) {
+        snapshotRevision = UUID()
         vaultName = vault.name
         groups = vault.groups
         collapsedGroupIDs.formIntersection(Set(vault.groups.map(\.id)))
@@ -521,6 +525,9 @@ final class VaultStore: ObservableObject {
             fileMonitor?.invalidate()
             monitoredURL = fileURL
             fileMonitor = VaultFileMonitor(url: fileURL) { [weak self] in self?.refreshFromDisk() }
+            // Catch changes between the repository load and monitor installation,
+            // including time spent awaiting biometric enrollment.
+            refreshPending = true
         }
         if case .group(let old) = sidebarSelection {
             sidebarSelection = vault.groups.first(where: { $0.id == old.id }).map(SidebarSelection.group) ?? .allItems
@@ -529,5 +536,6 @@ final class VaultStore: ObservableObject {
             }
         }
         reconcileSelection()
+        refreshIfNeeded()
     }
 }

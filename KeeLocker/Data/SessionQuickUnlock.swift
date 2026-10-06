@@ -33,6 +33,12 @@ extension QuickUnlockKeyStorage {
 struct QuickUnlockRegistration: Equatable, Sendable {
     fileprivate let identity: String
     fileprivate let account: String
+
+    /// The repository already canonicalized this path at open time. Resolving it
+    /// again would let a later symlink change reinterpret the opened identity.
+    func matchesOpenedVault(_ url: URL?) -> Bool {
+        url?.standardizedFileURL.path == identity
+    }
 }
 
 struct QuickUnlockEnrollmentAttempt: Sendable {
@@ -45,6 +51,7 @@ protocol QuickUnlockService: AnyObject {
     var isAvailable: Bool { get }
     func contains(_ url: URL) -> Bool
     func registration(for url: URL) -> QuickUnlockRegistration?
+    func isCurrent(_ registration: QuickUnlockRegistration) -> Bool
     func enrollmentAttempt(for url: URL) -> QuickUnlockEnrollmentAttempt
     func prepareEnrollment(for url: URL, request: UUID, attempt: QuickUnlockEnrollmentAttempt) throws -> QuickUnlockRegistration
     func cache(_ material: Data, registration: QuickUnlockRegistration, request: UUID) async throws
@@ -94,6 +101,10 @@ final class SessionQuickUnlock: QuickUnlockService {
         let id = identity(url)
         guard let record = records[id] else { return nil }
         return QuickUnlockRegistration(identity: id, account: record.account)
+    }
+
+    func isCurrent(_ registration: QuickUnlockRegistration) -> Bool {
+        records[registration.identity]?.account == registration.account
     }
 
     func enrollmentAttempt(for url: URL) -> QuickUnlockEnrollmentAttempt {

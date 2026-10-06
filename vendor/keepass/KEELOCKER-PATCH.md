@@ -6,7 +6,9 @@ Local patch in `src/db/types/entry.rs`:
 
 The core creates a history checkpoint before replacing/removing attachment data.
 Regression coverage: `attachment_versions_survive_replace_and_delete` in the core integration tests.
-`src/db/otp.rs` uses the standard otpauth default of six digits when omitted.
+`src/db/otp.rs` uses the standard otpauth default of six digits when omitted
+and accepts only the `totp` URI type. HOTP and unknown types remain stored as
+raw entry fields but are not presented as time-based codes.
 Reference: https://github.com/google/google-authenticator/wiki/Key-Uri-Format
 Compatibility guards in `config.rs` and `format/kdbx4/parse.rs` reject unsupported
 KDF dictionary keys and nonempty outer-header comments, which upstream silently
@@ -56,3 +58,24 @@ is zeroized on drop and cleared when credentials are replaced. The core's versio
 material accepts one or two components (password and/or key file), treats them as
 secrets, and never persists them outside the normal encrypted KDBX. Regression
 coverage: `session_key_material_*` in `lifecycle.rs`, plus Swift Quick Unlock tests.
+
+XML text preservation uses `cs_opt_text` for optional human-readable strings;
+only a truly empty string maps to None. Structured tags and the generic
+UUID/color/time helper keep their previous blank-value normalization.
+quick-xml's serde map visitor skips whitespace-only text
+in attribute-bearing String/Value elements, so `xml_db/whitespace.rs` restores
+those fields with the same library's event reader and scalar text decoder before
+model conversion. Current entries and history keep their original field order
+and protection flags. Regression coverage: `value_preservation.rs`, including
+independent KeePassXC export after an unrelated save.
+
+Tracked mutations enforce imported HistoryMaxItems and HistoryMaxSize limits.
+Zero disables history and negative/absent limits are unlimited. Opening or saving
+alone does not prune imported history. When pruning is needed, newest modification
+times win even if an imported XML history is oldest-first. Size accounting charges
+UTF-8 field payloads and attachment bytes per version, including shared binaries.
+Binary CustomData is charged at its serialized padded-base64 length, rather than
+its smaller decoded length; string CustomData uses its UTF-8 length.
+Discarded assets are removed only after rebuilding ownership and only when no
+current, historical or group owner remains. Regression coverage:
+`history_retention.rs` and the existing attachment regressions.

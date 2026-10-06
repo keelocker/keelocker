@@ -132,6 +132,20 @@ pub mod cs_opt_fromstr {
     }
 }
 
+/// Optional text. Whitespace is user data, including in passwords and history.
+pub mod cs_opt_text {
+    use serde::{Deserialize, Deserializer};
+
+    pub use super::cs_opt_string::serialize;
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Option<String>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Option::<String>::deserialize(d)?.filter(|s| !s.is_empty()))
+    }
+}
+
 /// Optional stringly value that may be missing or empty
 /// (e.g. `<Name></Name>` or `<Name/>`)
 pub mod cs_opt_string {

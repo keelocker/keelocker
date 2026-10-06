@@ -132,9 +132,22 @@ struct EntryFilesAndHistory: View {
         }
         .padding(24).frame(width: 580)
         .disabled(store.isBusy || working)
-        .task(id: entry?.historyCount) {
-            do { versions = try await store.history(id) }
-            catch { if !(error is CancellationError) { failure = (error as? VaultFailure) ?? .invalidOperation } }
+        .task(id: store.snapshotRevision) {
+            let revision = store.snapshotRevision
+            versions = []
+            selectedVersion = nil
+            do {
+                let latest = try await store.history(id)
+                try Task.checkCancellation()
+                guard revision == store.snapshotRevision else { return }
+                versions = latest
+                failure = nil
+            } catch {
+                if !Task.isCancelled, revision == store.snapshotRevision,
+                   !(error is CancellationError) {
+                    failure = (error as? VaultFailure) ?? .invalidOperation
+                }
+            }
         }
         .sheet(isPresented: Binding(get: { selectedVersion != nil }, set: { if !$0 { selectedVersion = nil } })) {
             if let index = selectedVersion, versions.indices.contains(index) {
@@ -254,5 +267,8 @@ final class VaultApplicationDelegate: NSObject, NSApplicationDelegate {
         return .terminateNow
     }
 
-    func applicationWillTerminate(_ notification: Notification) { SessionQuickUnlock.shared.reset() }
+    func applicationWillTerminate(_ notification: Notification) {
+        ClipboardOwner.shared.clearOnTermination()
+        SessionQuickUnlock.shared.reset()
+    }
 }

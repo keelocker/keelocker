@@ -116,6 +116,10 @@ pub enum TOTPError {
     #[error("Bad URL scheme: '{}'", _0)]
     BadScheme(String),
 
+    /// The URI describes a different OTP type, which cannot generate TOTP codes.
+    #[error("Unsupported OTP type: '{}'", _0)]
+    BadType(String),
+
     /// The hash algorithm specified in the TOTP URL is not recognized or supported
     #[error("Bad hash algorithm: '{}'", _0)]
     BadAlgorithm(String),
@@ -129,6 +133,11 @@ impl std::str::FromStr for TOTP {
 
         if parsed.scheme() != "otpauth" {
             return Err(TOTPError::BadScheme(parsed.scheme().to_string()));
+        }
+        if parsed.host_str() != Some("totp") {
+            return Err(TOTPError::BadType(
+                parsed.host_str().unwrap_or_default().to_string(),
+            ));
         }
         let query_pairs = parsed.query_pairs();
 

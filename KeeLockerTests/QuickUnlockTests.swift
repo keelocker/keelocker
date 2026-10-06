@@ -419,6 +419,90 @@ final class QuickUnlockTests: XCTestCase {
         XCTAssertEqual(repository.locks, previousLocks + 1, "The rejected repository session must be closed")
     }
 
+    func testRetargetedCanonicalPathRestoredBeforeCallbackCannotPublishOtherVault() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appendingPathComponent("first.kdbx")
+        let second = directory.appendingPathComponent("second.kdbx")
+        let parked = directory.appendingPathComponent("parked.kdbx")
+        try Data("synthetic first vault".utf8).write(to: first)
+        try Data("synthetic second vault with the same keys".utf8).write(to: second)
+        let service = SessionQuickUnlock(storage: SyntheticKeyStorage())
+        let repository = SyntheticQuickRepository(material: material)
+        repository.openedURL = first
+        let store = VaultStore(quickUnlock: service)
+        store.use(repository, fileURL: first)
+        store.unlock(password: "synthetic-password")
+        await store.waitForUnlock()
+        store.lock()
+        let previousLocks = repository.locks
+        repository.pauseMaterialLoad = true
+        // This hook runs after recovery, at the repository's canonical open boundary.
+        repository.onMaterialLoad = {
+            try FileManager.default.moveItem(at: first, to: parked)
+            try FileManager.default.createSymbolicLink(at: first, withDestinationURL: second)
+        }
+        store.unlockWithTouchID()
+        while repository.loading == nil, store.state == .unlocking { await Task.yield() }
+        _ = try XCTUnwrap(repository.loading, "The canonical open must reach the delayed return gate")
+        try FileManager.default.removeItem(at: first)
+        try FileManager.default.moveItem(at: parked, to: first)
+        XCTAssertNotNil(service.registration(for: first), "Resolving the original URL again hides the retarget")
+        repository.resumeLoad()
+        await store.waitForUnlock()
+        XCTAssertEqual(store.state, .locked)
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertNil(store.selectedEntry)
+        XCTAssertEqual(repository.locks, previousLocks + 1, "Close the mismatched opened session")
+        XCTAssertEqual(store.quickUnlockFailure, .missingKey)
+    }
+
+    func testCredentialChangeDuringEnrollmentIsDetectedByInitialRefresh() async throws {
+        let storage = SyntheticKeyStorage()
+        let service = SessionQuickUnlock(storage: storage)
+        let repository = SyntheticQuickRepository(material: material)
+        let store = VaultStore(quickUnlock: service)
+        store.use(repository, fileURL: url)
+        await storage.suspendNextWrite()
+        store.unlock(password: "synthetic-password")
+        while !(await storage.writeIsWaiting()) { await Task.yield() }
+        repository.credentialsChanged = true
+        await storage.resumeWrite()
+        await store.waitForUnlock()
+        await store.waitForRefresh()
+        XCTAssertEqual(store.state, .unlocked, "Keep the successful password session available")
+        XCTAssertEqual(store.operationFailure, .credentialsChanged)
+        XCTAssertFalse(service.contains(url), "Invalidate the enrollment for the obsolete credentials")
+        XCTAssertGreaterThan(repository.refreshes, 0)
+        store.lock()
+    }
+
+    func testInitialRefreshAfterEnrollmentDefersForDraftThenAdoptsChange() async throws {
+        let storage = SyntheticKeyStorage()
+        let service = SessionQuickUnlock(storage: storage)
+        let repository = SyntheticQuickRepository(material: material)
+        let store = VaultStore(quickUnlock: service)
+        store.use(repository, fileURL: url)
+        await storage.suspendNextWrite()
+        store.unlock(password: "synthetic-password")
+        while !(await storage.writeIsWaiting()) { await Task.yield() }
+        try await repository.changeExternalTitle("Changed while enrollment was waiting")
+        store.hasDraft = true
+        await storage.resumeWrite()
+        await store.waitForUnlock()
+        await store.waitForRefresh()
+        XCTAssertEqual(repository.refreshes, 0)
+        XCTAssertFalse(store.items.contains { $0.title == "Changed while enrollment was waiting" })
+        store.hasDraft = false
+        await store.waitForRefresh()
+        XCTAssertEqual(repository.refreshes, 1)
+        XCTAssertTrue(store.items.contains { $0.title == "Changed while enrollment was waiting" })
+        XCTAssertEqual(store.selectedEntry?.title, "Changed while enrollment was waiting")
+        XCTAssertFalse(store.isBusy)
+        store.lock()
+    }
+
     func testCredentialFailuresInvalidateTheOwningRegistration() async throws {
         for reload in [false, true] {
             let service = SessionQuickUnlock(storage: SyntheticKeyStorage())
@@ -568,29 +652,39 @@ private final class SyntheticQuickRepository: VaultRepository {
     var pauseMaterialExport = false
     var pausePasswordLoad = false
     var locks = 0
-    var loading: CheckedContinuation<Vault, Never>?
+    var refreshes = 0
+    var openedURL = URL(fileURLWithPath: "/tmp/synthetic-quick-unlock.kdbx")
+    var onMaterialLoad: (() throws -> Void)?
+    var loading: CheckedContinuation<Void, Never>?
     var exporting: CheckedContinuation<Data, Never>?
     var passwordLoading: CheckedContinuation<Vault, Never>?
     private let material: Data
     private let memory = MemoryVaultRepository()
+    private var externalChange = false
+    private var openedVault: Vault {
+        var vault = memory.vault
+        vault.fileURL = openedURL.resolvingSymlinksInPath().standardizedFileURL
+        return vault
+    }
     init(material: Data) { self.material = material }
     func load(password: String, keyFile: URL?) async throws -> Vault {
         guard !rejectPassword else { throw VaultFailure.wrongPassword }
         if pausePasswordLoad { return await withCheckedContinuation { passwordLoading = $0 } }
-        return memory.vault
+        return openedVault
     }
     func load(keyMaterial: Data) async throws -> Vault {
         materialLoads += 1
         guard keyMaterial == material, !rejectMaterial else { throw VaultFailure.wrongPassword }
+        try onMaterialLoad?()
+        let vault = openedVault
         if pauseMaterialLoad {
-            let vault = await withCheckedContinuation { loading = $0 }
+            await withCheckedContinuation { loading = $0 }
             guard !rejectMaterial else { throw VaultFailure.wrongPassword }
-            return vault
         }
-        return memory.vault
+        return vault
     }
-    func resumeLoad() { loading?.resume(returning: memory.vault); loading = nil }
-    func resumePasswordLoad() { passwordLoading?.resume(returning: memory.vault); passwordLoading = nil }
+    func resumeLoad() { loading?.resume(); loading = nil }
+    func resumePasswordLoad() { passwordLoading?.resume(returning: openedVault); passwordLoading = nil }
     func lock() { locks += 1 }
     func keyMaterial() async throws -> Data {
         materialExports += 1
@@ -600,8 +694,17 @@ private final class SyntheticQuickRepository: VaultRepository {
     func resumeExport() { exporting?.resume(returning: material); exporting = nil }
     func entry(_ id: UUID) async throws -> VaultEntry { try await memory.entry(id) }
     func refresh() async throws -> Vault? {
+        refreshes += 1
         if credentialsChanged { throw VaultFailure.credentialsChanged }
-        return nil
+        guard externalChange else { return nil }
+        externalChange = false
+        return openedVault
+    }
+    func changeExternalTitle(_ title: String) async throws {
+        var entry = memory.vault.entries[0]
+        entry.title = title
+        _ = try await memory.execute(.updateEntry(entry))
+        externalChange = true
     }
     func execute(_ command: VaultCommand) async throws -> VaultCommandResult {
         if case .reload = command, credentialsChanged { throw VaultFailure.credentialsChanged }
