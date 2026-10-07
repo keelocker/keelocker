@@ -10,6 +10,10 @@ There is no stable release or guarantee that every third-party vault is supporte
 
 macOS is the current platform. There are no iOS, Android or Windows app targets.
 
+![KeeLocker on macOS in dark appearance, showing vault groups, the login list and Figma entry details with a concealed password.](docs/images/keelocker-macos.png)
+
+*The built-in demo vault is shown; all account details are synthetic.*
+
 ## Use
 
 Open a `.kdbx` with **File → Open** (⌘O), then enter its password and optional key
