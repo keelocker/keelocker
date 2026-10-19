@@ -18,11 +18,14 @@ KeeLocker is a calm, precise vault workspace. The sidebar feels light and alive 
 
 The app uses the macOS system typeface so controls, localization and text metrics remain genuinely native. Titles use 28 to 32 pt semibold with slightly tightened tracking; section titles use 13 pt semibold; body and controls use the system body size; metadata uses caption with secondary label color. Passwords and TOTP use the system monospaced design.
 
+The detail title and its editing field share the same 30 pt semibold font, native character spacing and 42 pt minimum height, so a single-line title retains its text metrics and metadata position when entering Edit. Do not tighten only the displayed title: native macOS text fields do not honor SwiftUI tracking.
+
 ## 4. Component styling
 
 - Sidebar rows: 38 pt high, 10 pt radius, transparent by default, subtle hover fill, accent-tinted selected fill.
 - Item rows: 72 pt minimum height, 10 pt radius, no separator cage, selected and hover states use surface fills.
 - Buttons: native label and icon construction, 9 pt radius for custom action buttons, 0.96 press scale in 120 ms unless Reduce Motion is enabled.
+- Detail action bar: native SwiftUI bordered buttons at the large system control size, with a bordered prominent Copy action. macOS supplies typography, shape, padding and interaction states. Copy/Copied and Show/Hide reserve the larger label and symbol dimensions so feedback does not move the action row or the content below it.
 - Toolbar: standard SwiftUI toolbar items for sort and add, with system sizing, hover and pressed states. Search uses `.searchable` in the toolbar with system focus and clearing behavior.
 - Credential groups: one grouped surface per semantic section, 14 pt radius, hairline separator only between rows.
 

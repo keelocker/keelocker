@@ -141,19 +141,19 @@ struct ItemDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: 5) {
-                if isEditing {
-                    TextField("Title", text: $draft.item.title)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 30, weight: .semibold))
-                        .lineLimit(1)
-                        .frame(height: 42, alignment: .leading)
-                        .focused($titleHasFocus)
-                } else {
-                    Text(presentedItem.title)
-                        .font(.system(size: 30, weight: .semibold))
-                        .tracking(-0.45)
-                        .lineLimit(2)
+                Group {
+                    if isEditing {
+                        TextField("Title", text: $draft.item.title)
+                            .textFieldStyle(.plain)
+                            .lineLimit(1)
+                            .focused($titleHasFocus)
+                    } else {
+                        Text(presentedItem.title)
+                            .lineLimit(2)
+                    }
                 }
+                .font(.system(size: 30, weight: .semibold))
+                .frame(minHeight: 42, alignment: .leading)
 
                 HStack(spacing: 7) {
                     Text(presentedItem.group.rawValue)
@@ -192,6 +192,8 @@ struct ItemDetailView: View {
             DetailActionButton(
                 title: copiedValue == .password ? "Copied" : "Copy",
                 iconName: copiedValue == .password ? "checkmark" : "doc.on.doc",
+                alternateLabel: copiedValue == .password
+                    ? ("Copy", "doc.on.doc") : ("Copied", "checkmark"),
                 prominence: .primary
             ) {
                 copy(presentedItem.password, as: .password)
@@ -200,7 +202,8 @@ struct ItemDetailView: View {
 
             DetailActionButton(
                 title: showsPassword ? "Hide" : "Show",
-                iconName: showsPassword ? "eye.slash" : "eye"
+                iconName: showsPassword ? "eye.slash" : "eye",
+                alternateLabel: showsPassword ? ("Show", "eye") : ("Hide", "eye.slash")
             ) {
                 showsPassword.toggle()
             }
@@ -613,25 +616,35 @@ private struct DetailActionButton: View {
 
     let title: String
     let iconName: String
+    var alternateLabel: (title: String, iconName: String)? = nil
     var prominence: Prominence = .normal
     let action: () -> Void
 
+    @ViewBuilder
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: iconName)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 12)
-                .frame(minWidth: 76, minHeight: 34)
-                .foregroundStyle(prominence == .primary ? Color.white : Color.primary)
-                .background(backgroundColor, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        if prominence == .primary {
+            button.buttonStyle(.borderedProminent)
+        } else {
+            button.buttonStyle(.bordered)
         }
-        .buttonStyle(PressableButtonStyle())
     }
 
-    private var backgroundColor: Color {
-        prominence == .primary ? KeeTheme.accent : Color.primary.opacity(0.06)
+    private var button: some View {
+        Button(action: action) {
+            ZStack {
+                if let alternateLabel {
+                    // Reserve both states' dimensions, including differing symbol heights.
+                    Label(alternateLabel.title, systemImage: alternateLabel.iconName)
+                        .hidden()
+                        .accessibilityHidden(true)
+                }
+                Label(title, systemImage: iconName)
+            }
+        }
+        .accessibilityLabel(title)
+        .labelStyle(.titleAndIcon)
+        .controlSize(.large)
+        .fixedSize()
     }
 }
 
