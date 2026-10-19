@@ -132,16 +132,48 @@ struct EntryIcon: View {
     let size: CGFloat
 
     var body: some View {
+        VaultIconTile(icon: item.icon, fallbackSymbol: item.iconName, fallbackColor: item.iconColor, size: size)
+            .accessibilityHidden(true)
+    }
+}
+
+struct VaultIconTile: View {
+    let icon: VaultEntryIcon?
+    let fallbackSymbol: String
+    let fallbackColor: ItemColor
+    let size: CGFloat
+    @State private var customImage: CGImage?
+
+    private var standard: StandardVaultIcon? {
+        if case .builtIn(let id) = icon { return StandardVaultIcon.find(id) }
+        return nil
+    }
+
+    private var color: ItemColor { standard?.color ?? fallbackColor }
+
+    var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
-                .fill(item.iconColor.color)
-            Image(systemName: item.iconName)
-                .font(.system(size: size * 0.42, weight: .semibold))
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(.white.opacity(0.94))
+                .fill(icon?.imageData != nil ? Color.primary.opacity(0.05) : color.color)
+            if let customImage {
+                Image(decorative: customImage, scale: 1)
+                    .resizable().scaledToFit().padding(size * 0.08)
+            } else {
+                Image(systemName: standard?.symbol ?? fallbackSymbol)
+                    .font(.system(size: size * 0.42, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(icon?.imageData != nil ? Color.secondary : .white.opacity(0.94))
+            }
         }
         .frame(width: size, height: size)
-        .shadow(color: item.iconColor.color.opacity(0.16), radius: 5, y: 2)
-        .accessibilityHidden(true)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
+        .shadow(color: color.color.opacity(0.16), radius: 5, y: 2)
+        .task(id: icon?.imageData) {
+            customImage = nil
+            guard let data = icon?.imageData else { return }
+            let image = await Task.detached { IconImageImport.preview(data) }.value
+            guard !Task.isCancelled else { return }
+            customImage = image
+        }
     }
 }

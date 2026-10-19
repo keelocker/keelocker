@@ -1,8 +1,265 @@
 import XCTest
+import AppKit
 @testable import KeeLocker
 
 @MainActor
 final class VaultStoreTests: XCTestCase {
+    func testLargeCustomIconCatalogMapsWithoutQuadraticLookup() async throws {
+        let groupID = UUID().uuidString
+        let icons = (0..<4_000).map { CoreCustomIcon(id: UUID().uuidString, name: "Synthetic \($0)", data: Data([1])) }
+        let entries = icons.map { icon in
+            CoreEntry(id: UUID().uuidString, groupId: groupID, title: "Synthetic", username: "", password: "",
+                      url: "", notes: "", tags: [], customFields: [], attachments: [], historyCount: 0,
+                      createdAt: nil, modifiedAt: nil, otp: nil, icon: .custom(id: icon.id),
+                      websiteIconOrigin: nil, hasExplicitIcon: false)
+        }
+        let group = CoreGroup(id: groupID, parentId: nil, name: "Synthetic", path: "Synthetic", createdAt: nil, modifiedAt: nil)
+        let source = CoreSnapshot(info: CoreVaultInfo(name: "Synthetic scale", path: "/tmp/synthetic-scale.kdbx", dirty: false, rootId: groupID),
+                                  groups: [group], entries: entries, customIcons: icons)
+        let repository = RustVaultRepository(url: URL(fileURLWithPath: source.info.path), opening: SnapshotVaultOpening(source: source))
+        defer { repository.lock() }
+        let start = ContinuousClock.now
+        let result = try await repository.load(password: "synthetic", keyFile: nil)
+        XCTAssertLessThan(start.duration(to: .now), .seconds(2))
+        XCTAssertEqual(result.entries.count, 4_000)
+        if case .custom(let last) = result.entries.last?.icon {
+            XCTAssertEqual(last.id.uuidString, icons.last?.id)
+        } else { XCTFail("The complete custom icon catalog must be mapped") }
+    }
+
+    func testDetailAndHistoryReadUseCatalogFromTheirOwnRevision() async throws {
+        for readsHistory in [false, true] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let copy = directory.appendingPathComponent("catalog-race.kdbx")
+            let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/interop.kdbx")
+            try FileManager.default.copyItem(at: fixture, to: copy)
+            let gate = SynchronousLoadGate()
+            defer { gate.release() }
+            let repository = RustVaultRepository(url: copy, opening: CatalogRaceOpening(gate: gate, readsHistory: readsHistory))
+            let initial = try await repository.load(password: "fixture-password", keyFile: nil)
+            defer { repository.lock() }
+            let id = try XCTUnwrap(initial.entries.first?.id)
+            let reading = Task {
+                if readsHistory { return try await repository.history(id) }
+                return [try await repository.entry(id)]
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while !gate.entered, ContinuousClock.now < deadline { await Task.yield() }
+            XCTAssertTrue(gate.entered)
+            guard gate.entered else { throw CancellationError() }
+            let external = RustVaultRepository(url: copy)
+            _ = try await external.load(password: "fixture-password", keyFile: nil)
+            defer { external.lock() }
+            var changed = try await external.entry(id)
+            let icon = try IconImageImport.normalized(syntheticIconPNG(), name: "Synthetic new revision")
+            changed.chooseIcon(.imported(icon))
+            _ = try await external.execute(.updateEntry(changed))
+            changed = try await external.entry(id)
+            changed.notes = "Another synthetic edit retains the custom icon in history"
+            _ = try await external.execute(.updateEntry(changed))
+            let refreshed = try await repository.refresh()
+            XCTAssertNotNil(refreshed)
+            gate.release()
+            let result = try await reading.value
+            XCTAssertTrue(result.contains { $0.icon?.imageData == icon.data })
+        }
+    }
+
+    func testIconImportDiscardsLateResultsAfterCancelAndReplacement() async throws {
+        let gate = SynchronousLoadGate()
+        defer { gate.release() }
+        let started = expectation(description: "Image reading started")
+        started.expectedFulfillmentCount = 2
+        let icon = VaultCustomIcon(id: UUID(), name: "Synthetic", data: Data([1, 2, 3]))
+        let imports = IconImportSession(loader: { _ in
+            await Task.detached {
+                started.fulfill()
+                gate.wait()
+                return icon
+            }.value
+        })
+        let url = URL(fileURLWithPath: "/tmp/synthetic-icon.png")
+        let oldRequest = imports.begin()
+        let oldRead = Task { try await imports.load(url, request: oldRequest) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !gate.entered, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertTrue(gate.entered)
+        imports.invalidate()
+        let obsoletePickerResult = try await imports.load(url, request: oldRequest)
+        XCTAssertNil(obsoletePickerResult)
+        let newRequest = imports.begin()
+        let newRead = Task { try await imports.load(url, request: newRequest) }
+        await fulfillment(of: [started], timeout: 3)
+        gate.release()
+        let obsoleteRead = try await oldRead.value
+        let currentRead = try await newRead.value
+        XCTAssertNil(obsoleteRead, "Invalidation must discard a read even without cancelling its task")
+        XCTAssertEqual(currentRead, icon)
+    }
+
+    func testIconImportDiscardsLateFailuresFromClosedEditor() async throws {
+        let gate = SynchronousLoadGate()
+        defer { gate.release() }
+        let started = expectation(description: "Image reading started")
+        let imports = IconImportSession(loader: { _ in
+            try await Task.detached {
+                started.fulfill()
+                gate.wait()
+                throw IconImageImport.Failure.invalidImage
+            }.value
+        })
+        let request = imports.begin()
+        let read = Task { try await imports.load(URL(fileURLWithPath: "/tmp/synthetic-icon.png"), request: request) }
+        await fulfillment(of: [started], timeout: 3)
+        imports.invalidate()
+        gate.release()
+        let result = try await read.value
+        XCTAssertNil(result, "A closed editor must not present an obsolete import failure")
+    }
+
+    func testStandardIconCatalogHasEveryKeePassIDAndAvailableSymbols() {
+        XCTAssertEqual(StandardVaultIcon.all.map(\.id), Array(UInt64(0)...UInt64(68)))
+        for icon in StandardVaultIcon.all {
+            XCTAssertNotNil(NSImage(systemSymbolName: icon.symbol, accessibilityDescription: nil), icon.name)
+        }
+    }
+
+    private func syntheticIconPNG() throws -> Data {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 300, pixelsHigh: 180,
+                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                   isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let pixels = try XCTUnwrap(bitmap.bitmapData)
+        for y in 0..<180 {
+            for x in 0..<300 {
+                let offset = y * bitmap.bytesPerRow + x * 4
+                pixels[offset] = 217
+                pixels[offset + 1] = 51
+                pixels[offset + 2] = 128
+                pixels[offset + 3] = 255
+            }
+        }
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+    }
+
+    func testIconImportNormalizesImageAndRejectsInvalidInput() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("Synthetic.png")
+        let source = try syntheticIconPNG()
+        try source.write(to: url)
+        let imported = try await Task.detached { try IconImageImport.load(url) }.value
+        XCTAssertEqual(imported.name, "Synthetic")
+        let image = try XCTUnwrap(IconImageImport.preview(imported.data))
+        XCTAssertEqual(image.width, 128)
+        XCTAssertEqual(image.height, 77)
+        let pixel = try XCTUnwrap(NSBitmapImageRep(cgImage: image).colorAt(x: 0, y: 0)?.usingColorSpace(.sRGB))
+        let original = try XCTUnwrap(NSBitmapImageRep(data: source)?.colorAt(x: 0, y: 0)?.usingColorSpace(.sRGB))
+        XCTAssertEqual(pixel.alphaComponent, 1, accuracy: 0.01)
+        XCTAssertEqual(pixel.redComponent, original.redComponent, accuracy: 0.02)
+        XCTAssertLessThan(imported.data.count, 1024 * 1024)
+        try Data("Invalid image".utf8).write(to: url)
+        do {
+            _ = try await Task.detached { try IconImageImport.load(url) }.value
+            XCTFail("Invalid images must not enter the draft")
+        } catch { XCTAssertTrue(error is IconImageImport.Failure) }
+        XCTAssertNil(IconImageImport.preview(Data()))
+    }
+
+    func testDemoIconDraftCancelSaveAndLock() async throws {
+        let repository = MemoryVaultRepository()
+        let store = VaultStore()
+        store.use(repository)
+        store.unlock()
+        await store.waitForUnlock()
+        let entries = repository.vault.entries
+        let icon = VaultCustomIcon(id: UUID(), name: "Synthetic", data: try syntheticIconPNG())
+        store.addItem()
+        var draft = try XCTUnwrap(store.newItemDraft)
+        draft.chooseIcon(.imported(icon))
+        XCTAssertTrue(repository.vault.customIcons.isEmpty)
+        store.cancelNewItem()
+        XCTAssertEqual(repository.vault.entries, entries)
+        XCTAssertTrue(repository.vault.customIcons.isEmpty)
+        store.addItem()
+        draft = try XCTUnwrap(store.newItemDraft)
+        draft.title = "Synthetic icon draft"
+        draft.chooseIcon(.imported(icon))
+        let saved = await store.saveItem(draft)
+        XCTAssertTrue(saved)
+        XCTAssertEqual(store.customIcons, [icon])
+        XCTAssertEqual(store.selectedEntry?.icon, .custom(icon))
+        XCTAssertEqual(store.selectedEntry?.isIconModified, false)
+        var edit = try XCTUnwrap(store.selectedEntry)
+        edit.chooseIcon(.builtIn(19))
+        let edited = await store.saveItem(edit)
+        XCTAssertTrue(edited)
+        XCTAssertEqual(store.selectedEntry?.icon, .builtIn(19))
+        store.lock()
+        XCTAssertTrue(store.customIcons.isEmpty)
+        XCTAssertTrue(store.items.isEmpty)
+    }
+
+    func testRealVaultIconsSaveReopenAndRetainHistory() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let copy = directory.appendingPathComponent("synthetic.kdbx")
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/interop.kdbx")
+        try FileManager.default.copyItem(at: fixture, to: copy)
+        let png = directory.appendingPathComponent("Synthetic.png")
+        try syntheticIconPNG().write(to: png)
+        let icon = try await Task.detached { try IconImageImport.load(png) }.value
+        let store = VaultStore()
+        store.openFile(copy)
+        store.unlock(password: "fixture-password")
+        await store.waitForUnlock()
+        store.addItem()
+        var draft = try XCTUnwrap(store.newItemDraft)
+        draft.title = "Synthetic icon entry"
+        draft.chooseIcon(.builtIn(19))
+        let created = await store.saveItem(draft)
+        XCTAssertTrue(created)
+        var entry = try XCTUnwrap(store.selectedEntry)
+        let id = entry.id
+        XCTAssertEqual(entry.icon, .builtIn(19))
+        entry.chooseIcon(.imported(icon))
+        let imported = await store.saveItem(entry)
+        XCTAssertTrue(imported)
+        let stored = try XCTUnwrap(store.customIcons.first { $0.data == icon.data })
+        XCTAssertEqual(store.selectedEntry?.icon, .custom(stored))
+        let history = try await store.history(id)
+        XCTAssertEqual(history.first?.icon, .builtIn(19))
+        store.addItem()
+        var shared = try XCTUnwrap(store.newItemDraft)
+        shared.title = "Shared custom icon"
+        shared.chooseIcon(.custom(stored))
+        let reused = await store.saveItem(shared)
+        XCTAssertTrue(reused)
+        XCTAssertEqual(store.selectedEntry?.icon, .custom(stored))
+        XCTAssertEqual(store.customIcons.filter { $0.data == stored.data }.count, 1)
+        store.selectedItemID = id
+        await store.waitForSelection()
+        // Unrelated edits must preserve the custom UUID and bytes.
+        entry = try XCTUnwrap(store.selectedEntry)
+        entry.notes = "Ordinary field edit"
+        let edited = await store.saveItem(entry)
+        XCTAssertTrue(edited)
+        XCTAssertNil(store.operationFailure)
+        XCTAssertFalse(store.isDirty)
+        store.lock()
+        XCTAssertTrue(store.customIcons.isEmpty)
+        store.unlock(password: "fixture-password")
+        await store.waitForUnlock()
+        store.selectedItemID = id
+        await store.waitForSelection()
+        XCTAssertEqual(store.selectedEntry?.icon, .custom(stored))
+        XCTAssertTrue(store.customIcons.contains(stored))
+        store.lock()
+    }
+
     func testCappedHistoryInvalidatesInspectionWhenCountAndTimestampStayTheSame() async throws {
         let repository = CappedHistoryRepository()
         let store = VaultStore()
@@ -82,7 +339,7 @@ final class VaultStoreTests: XCTestCase {
         let saving = Task { await store.saveItem(draft) }
         while repository.continuation == nil { await Task.yield() }
         XCTAssertTrue(store.isBusy, "Save must not be enabled again for an already-created draft")
-        repository.continuation?.resume(returning: try XCTUnwrap(repository.suspendedEntry))
+        repository.completeSelection(.success(try XCTUnwrap(repository.suspendedEntry)))
         let saved = await saving.value
         XCTAssertTrue(saved)
         XCTAssertNil(store.newItemDraft)
@@ -99,7 +356,7 @@ final class VaultStoreTests: XCTestCase {
         XCTAssertNotNil(store.selectedEntry)
         store.refreshFromDisk()
         while repository.continuation == nil { await Task.yield() }
-        repository.continuation?.resume(throwing: VaultFailure.failedToReadFile)
+        repository.completeSelection(.failure(VaultFailure.failedToReadFile))
         await store.waitForRefresh()
         XCTAssertNil(store.selectedEntry)
         XCTAssertFalse(store.isBusy)
@@ -117,7 +374,7 @@ final class VaultStoreTests: XCTestCase {
         while repository.continuation == nil { await Task.yield() }
         XCTAssertTrue(store.isBusy, "Editing must stay blocked while selected details still contain the old file contents")
         XCTAssertEqual(store.selectedEntry?.username, previous.username)
-        repository.continuation?.resume(returning: repository.currentEntry)
+        repository.completeSelection(.success(repository.currentEntry))
         await store.waitForRefresh()
         XCTAssertFalse(store.isBusy)
         XCTAssertEqual(store.selectedEntry?.username, "Externally refreshed username")
@@ -1128,7 +1385,7 @@ private final class DirectorySyncWarningVault: CoreVault, @unchecked Sendable {
         mutex.lock()
         defer { mutex.unlock() }
         return CoreSnapshot(info: CoreVaultInfo(name: name, path: path, dirty: dirty, rootId: UUID().uuidString),
-                            groups: [], entries: [])
+                            groups: [], entries: [], customIcons: [])
     }
     override func save() throws {
         mutex.lock()
@@ -1317,6 +1574,58 @@ private final class SynchronousLoadGate: @unchecked Sendable {
     }
 }
 
+private struct CatalogRaceOpening: RustVaultOpening {
+    let gate: SynchronousLoadGate
+    let readsHistory: Bool
+    func open(path: String, password: String, keyFile: String?) throws -> CoreVault {
+        CatalogRaceVault(base: try CoreVault.open(path: path, password: password, keyFile: keyFile),
+                         gate: gate, readsHistory: readsHistory)
+    }
+    func open(path: String, keyMaterial: Data) throws -> CoreVault { throw VaultFailure.invalidOperation }
+}
+
+private struct SnapshotVaultOpening: RustVaultOpening {
+    let source: CoreSnapshot
+    func open(path: String, password: String, keyFile: String?) throws -> CoreVault { SnapshotCoreVault(source: source) }
+    func open(path: String, keyMaterial: Data) throws -> CoreVault { SnapshotCoreVault(source: source) }
+}
+
+private final class SnapshotCoreVault: CoreVault, @unchecked Sendable {
+    let source: CoreSnapshot
+    init(source: CoreSnapshot) { self.source = source; super.init(noHandle: NoHandle()) }
+    required init(unsafeFromHandle handle: UInt64) { fatalError("Synthetic snapshot has no native handle") }
+    override func snapshot() throws -> CoreSnapshot { source }
+    override func lock() {}
+}
+
+private final class CatalogRaceVault: CoreVault, @unchecked Sendable {
+    let base: CoreVault
+    let gate: SynchronousLoadGate
+    let readsHistory: Bool
+    init(base: CoreVault, gate: SynchronousLoadGate, readsHistory: Bool) {
+        self.base = base
+        self.gate = gate
+        self.readsHistory = readsHistory
+        super.init(noHandle: NoHandle())
+    }
+    required init(unsafeFromHandle handle: UInt64) { fatalError("Test wrapper has no native handle") }
+    override func snapshot() throws -> CoreSnapshot { try base.snapshot() }
+    override func entry(id: String) throws -> CoreEntry {
+        if !readsHistory { gate.wait() }
+        return try base.entry(id: id)
+    }
+    override func history(entry: String) throws -> [CoreEntry] {
+        if readsHistory { gate.wait() }
+        return try base.history(entry: entry)
+    }
+    override func inspectEntry(id: String, includeHistory: Bool) throws -> CoreEntryInspection {
+        gate.wait()
+        return try base.inspectEntry(id: id, includeHistory: includeHistory)
+    }
+    override func reloadIfChanged() throws -> Bool { try base.reloadIfChanged() }
+    override func lock() { base.lock() }
+}
+
 private struct SyntheticVaultOpening: RustVaultOpening {
     let path: String
     let openGate: SynchronousLoadGate
@@ -1347,7 +1656,7 @@ private final class SyntheticOpenedVault: CoreVault, @unchecked Sendable {
     required init(unsafeFromHandle handle: UInt64) { fatalError("Synthetic sessions have no native handle") }
     override func snapshot() throws -> CoreSnapshot {
         CoreSnapshot(info: CoreVaultInfo(name: "Synthetic admitted vault", path: path, dirty: false, rootId: UUID().uuidString),
-                     groups: [], entries: [])
+                     groups: [], entries: [], customIcons: [])
     }
     override func lock() { lockGate.wait() }
 }
@@ -1391,6 +1700,12 @@ private final class SuspendedSelectionRepository: VaultRepository {
     var suspendedEntry: VaultEntry?
     private var suspendsSelection = false
     var currentEntry: VaultEntry { memory.vault.entries[0] }
+    func completeSelection(_ result: Result<VaultEntry, Error>) {
+        suspendsSelection = false
+        let pending = continuation
+        continuation = nil
+        pending?.resume(with: result)
+    }
     func load(password: String, keyFile: URL?) async throws -> Vault { memory.vault }
     func entry(_ id: UUID) async throws -> VaultEntry {
         if suspendsSelection {

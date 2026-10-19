@@ -1,5 +1,5 @@
 use crate::models::*;
-use keepass::db::EntryRef;
+use keepass::db::{CustomDataValue, EntryRef, Icon};
 use keepass::Database;
 
 pub fn groups(db: &Database) -> Vec<CoreGroup> {
@@ -32,6 +32,61 @@ pub fn groups(db: &Database) -> Vec<CoreGroup> {
 }
 
 pub const STANDARD: [&str; 5] = ["Title", "UserName", "Password", "URL", "Notes"];
+pub const WEBSITE_ICON_ORIGIN: &str = "KeeLocker.WebsiteIcon.Origin";
+pub const WEBSITE_ICON_UUID: &str = "KeeLocker.WebsiteIcon.UUID";
+pub const MANUAL_ICON: &str = "KeeLocker.Icon.Manual";
+
+pub fn icon_identity(icon: &Icon) -> String {
+    match icon {
+        Icon::BuiltIn(id) => format!("builtin:{id}"),
+        Icon::Custom(id) => format!("custom:{id}"),
+    }
+}
+
+fn has_explicit_icon(source: &EntryRef<'_>) -> bool {
+    let Some(CustomDataValue::String(identity)) = source
+        .custom_data
+        .get(MANUAL_ICON)
+        .and_then(|v| v.value.as_ref())
+    else {
+        return false;
+    };
+    source
+        .icon()
+        .is_some_and(|icon| icon_identity(icon) == *identity)
+}
+
+fn website_icon_origin(source: &EntryRef<'_>) -> Option<String> {
+    let Icon::Custom(id) = source.icon()? else {
+        return None;
+    };
+    let Some(CustomDataValue::String(stored_id)) =
+        &source.custom_data.get(WEBSITE_ICON_UUID)?.value
+    else {
+        return None;
+    };
+    // Another client may change the icon while retaining our CustomData.
+    if uuid::Uuid::parse_str(stored_id).ok()? != id.uuid() {
+        return None;
+    }
+    match &source.custom_data.get(WEBSITE_ICON_ORIGIN)?.value {
+        Some(CustomDataValue::String(origin)) => Some(origin.clone()),
+        _ => None,
+    }
+}
+
+pub fn custom_icons(db: &Database) -> Vec<CoreCustomIcon> {
+    let mut icons: Vec<_> = db
+        .iter_all_custom_icons()
+        .map(|icon| CoreCustomIcon {
+            id: icon.id().to_string(),
+            name: icon.name.clone(),
+            data: icon.data.clone(),
+        })
+        .collect();
+    icons.sort_by(|a, b| a.id.cmp(&b.id));
+    icons
+}
 
 pub fn entry(source: EntryRef<'_>, secrets: bool) -> CoreEntry {
     let group_id = source.parent().id().to_string();
@@ -98,5 +153,11 @@ pub fn entry_in_group(source: EntryRef<'_>, secrets: bool, group_id: String) -> 
             .last_modification
             .map(|t| t.and_utc().timestamp()),
         otp,
+        icon: source.icon().map(|icon| match icon {
+            Icon::BuiltIn(id) => CoreIcon::BuiltIn { id: *id as u64 },
+            Icon::Custom(id) => CoreIcon::Custom { id: id.to_string() },
+        }),
+        website_icon_origin: website_icon_origin(&source),
+        has_explicit_icon: has_explicit_icon(&source),
     }
 }

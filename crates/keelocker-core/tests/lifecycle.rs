@@ -1,4 +1,6 @@
-use keelocker_core::{CoreCustomField, CoreEntryEdit, CoreError, CoreVault};
+use keelocker_core::{
+    CoreCustomField, CoreEntryEdit, CoreError, CoreIcon, CoreIconEdit, CoreVault,
+};
 use keepass::{
     config::{DatabaseVersion, KdfConfig, OuterCipherConfig},
     Database, DatabaseKey,
@@ -11,6 +13,385 @@ use std::{
 };
 
 const PASSWORD: &str = "fixture-password";
+
+const ICON_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0,
+    0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0,
+    239, 163, 15, 91, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
+fn change_icon(v: &CoreVault, id: &str, icon: CoreIconEdit) {
+    let mut change = edit("Icon test");
+    change.icon = Some(icon);
+    v.update_entry(id.into(), change).unwrap();
+}
+
+#[test]
+fn icon_selection_import_sharing_and_history_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = fixture(dir.path(), false, false, 1, false);
+    let v = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    let id = v
+        .create_entry(v.snapshot().unwrap().info.root_id, edit("Icon test"))
+        .unwrap();
+    change_icon(&v, &id, CoreIconEdit::BuiltIn { id: 19 });
+    change_icon(
+        &v,
+        &id,
+        CoreIconEdit::Import {
+            data: ICON_PNG.into(),
+            name: "Synthetic icon".into(),
+        },
+    );
+    let snapshot = v.snapshot().unwrap();
+    let custom = snapshot
+        .custom_icons
+        .iter()
+        .find(|i| i.data == ICON_PNG)
+        .unwrap();
+    let custom_id = custom.id.clone();
+    assert_eq!(custom.name.as_deref(), Some("Synthetic icon"));
+    assert!(matches!(
+        v.history(id.clone()).unwrap().first().unwrap().icon,
+        Some(CoreIcon::BuiltIn { id: 19 })
+    ));
+    let mut second = edit("Shared icon");
+    second.icon = Some(CoreIconEdit::Custom {
+        // Foundation UUID.uuidString uses uppercase; identity is case-independent.
+        id: custom_id.to_uppercase(),
+    });
+    let other = v.create_entry(snapshot.info.root_id, second).unwrap();
+    change_icon(&v, &id, CoreIconEdit::BuiltIn { id: 64 });
+    v.save().unwrap();
+    let reopened = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    assert!(matches!(
+        reopened.entry(id.clone()).unwrap().icon,
+        Some(CoreIcon::BuiltIn { id: 64 })
+    ));
+    assert!(
+        matches!(reopened.entry(other.clone()).unwrap().icon, Some(CoreIcon::Custom { id }) if id == custom_id)
+    );
+    assert!(reopened
+        .history(id.clone())
+        .unwrap()
+        .iter()
+        .any(|e| matches!(&e.icon, Some(CoreIcon::Custom { id }) if *id == custom_id)));
+    // Importing identical bytes reuses the asset, without renaming existing metadata.
+    let count = reopened.snapshot().unwrap().custom_icons.len();
+    change_icon(
+        &reopened,
+        &id,
+        CoreIconEdit::Import {
+            data: ICON_PNG.into(),
+            name: "Duplicate".into(),
+        },
+    );
+    assert_eq!(reopened.snapshot().unwrap().custom_icons.len(), count);
+    reopened
+        .update_entry(other.clone(), edit("Ordinary edit"))
+        .unwrap();
+    assert!(
+        matches!(reopened.entry(other).unwrap().icon, Some(CoreIcon::Custom { id }) if id == custom_id)
+    );
+    reopened.save().unwrap();
+    let db = Database::parse(&fs::read(p).unwrap(), key()).unwrap();
+    assert_eq!(
+        db.iter_all_custom_icons()
+            .find(|i| i.id().to_string() == custom_id)
+            .unwrap()
+            .data,
+        ICON_PNG
+    );
+}
+
+#[test]
+fn website_icon_provenance_survives_reopen_and_manual_choice_clears_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = fixture(dir.path(), false, false, 1, false);
+    let v = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    let id = v
+        .create_entry(v.snapshot().unwrap().info.root_id, edit("Website icon"))
+        .unwrap();
+    change_icon(
+        &v,
+        &id,
+        CoreIconEdit::Website {
+            data: ICON_PNG.into(),
+            name: "icons.example".into(),
+            origin: "https://icons.example/".into(),
+        },
+    );
+    let mut unrelated = edit("Website changed");
+    unrelated.url = "https://changed.example/private?query=synthetic".into();
+    v.update_entry(id.clone(), unrelated).unwrap();
+    assert_eq!(
+        v.snapshot()
+            .unwrap()
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .unwrap()
+            .website_icon_origin
+            .as_deref(),
+        Some("https://icons.example/")
+    );
+    v.save().unwrap();
+    v.lock();
+    let reopened = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    let downloaded = reopened.entry(id.clone()).unwrap();
+    assert_eq!(
+        downloaded.website_icon_origin.as_deref(),
+        Some("https://icons.example/")
+    );
+    assert!(reopened
+        .history(id.clone())
+        .unwrap()
+        .iter()
+        .any(|e| e.website_icon_origin.as_deref() == Some("https://icons.example/")));
+    let Some(CoreIcon::Custom { id: icon_id }) = downloaded.icon else {
+        panic!("expected custom icon")
+    };
+    let mut selected = edit("Frozen icon");
+    selected.icon = Some(CoreIconEdit::Custom {
+        id: icon_id.clone(),
+    });
+    reopened.update_entry(id.clone(), selected).unwrap();
+    assert!(reopened
+        .entry(id.clone())
+        .unwrap()
+        .website_icon_origin
+        .is_none());
+    reopened.save().unwrap();
+    let db = Database::parse(&fs::read(&p).unwrap(), key()).unwrap();
+    let current = db
+        .iter_all_entries()
+        .find(|e| e.id().to_string() == id)
+        .unwrap();
+    assert!(!current
+        .custom_data
+        .contains_key("KeeLocker.WebsiteIcon.Origin"));
+    assert!(!current
+        .custom_data
+        .contains_key("KeeLocker.WebsiteIcon.UUID"));
+    assert_eq!(current.custom_icon().unwrap().id().to_string(), icon_id);
+}
+
+#[test]
+fn external_icon_change_invalidates_retained_website_provenance() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = fixture(dir.path(), false, false, 1, false);
+    let v = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    let id = v
+        .create_entry(v.snapshot().unwrap().info.root_id, edit("Website icon"))
+        .unwrap();
+    change_icon(
+        &v,
+        &id,
+        CoreIconEdit::Website {
+            data: ICON_PNG.into(),
+            name: "icons.example".into(),
+            origin: "https://icons.example/".into(),
+        },
+    );
+    v.save().unwrap();
+    v.lock();
+    let mut db = Database::parse(&fs::read(&p).unwrap(), key()).unwrap();
+    let entry_id = db
+        .iter_all_entries()
+        .find(|e| e.id().to_string() == id)
+        .unwrap()
+        .id();
+    // Simulate another client changing the image without knowing our metadata.
+    db.entry_mut(entry_id)
+        .unwrap()
+        .set_icon_custom_new(vec![1, 2, 3]);
+    db.save(&mut fs::File::create(&p).unwrap(), key()).unwrap();
+    let reopened = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    assert!(reopened.entry(id).unwrap().website_icon_origin.is_none());
+}
+
+#[test]
+fn manual_key_choice_survives_reopen_and_external_change_invalidates_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = fixture(dir.path(), false, false, 1, false);
+    let v = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    let id = v
+        .create_entry(v.snapshot().unwrap().info.root_id, edit("Manual key"))
+        .unwrap();
+    assert!(!v.entry(id.clone()).unwrap().has_explicit_icon);
+    change_icon(&v, &id, CoreIconEdit::BuiltIn { id: 0 });
+    v.update_entry(id.clone(), edit("Ordinary edit")).unwrap();
+    v.save().unwrap();
+    v.lock();
+    let reopened = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    assert!(reopened.entry(id.clone()).unwrap().has_explicit_icon);
+    assert!(
+        reopened
+            .snapshot()
+            .unwrap()
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .unwrap()
+            .has_explicit_icon
+    );
+    assert!(reopened
+        .history(id.clone())
+        .unwrap()
+        .iter()
+        .any(|e| e.has_explicit_icon));
+    reopened.lock();
+    let mut db = Database::parse(&fs::read(&p).unwrap(), key()).unwrap();
+    let entry_id = db
+        .iter_all_entries()
+        .find(|e| e.id().to_string() == id)
+        .unwrap()
+        .id();
+    db.entry_mut(entry_id).unwrap().set_icon_builtin(19);
+    db.save(&mut fs::File::create(&p).unwrap(), key()).unwrap();
+    let external = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    assert!(!external.entry(id.clone()).unwrap().has_explicit_icon);
+    change_icon(
+        &external,
+        &id,
+        CoreIconEdit::Website {
+            data: ICON_PNG.into(),
+            name: "Synthetic".into(),
+            origin: "https://icons.example/".into(),
+        },
+    );
+    assert!(!external.entry(id).unwrap().has_explicit_icon);
+}
+
+#[test]
+fn invalid_icon_selection_is_atomic_and_unknown_stored_ids_survive_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = fixture(dir.path(), false, false, 1, false);
+    let mut db = Database::parse(&fs::read(&p).unwrap(), key()).unwrap();
+    let id = {
+        let mut root = db.root_mut();
+        let mut entry = root.add_entry();
+        entry.set_unprotected("Title", "Future icon");
+        entry.set_icon_builtin(1234);
+        entry.id().to_string()
+    };
+    db.save(&mut fs::File::create(&p).unwrap(), key()).unwrap();
+    let v = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    let before = v.snapshot().unwrap();
+    for icon in [
+        CoreIconEdit::BuiltIn { id: 69 },
+        CoreIconEdit::Custom {
+            id: uuid::Uuid::new_v4().to_string(),
+        },
+        CoreIconEdit::Import {
+            data: vec![1, 2, 3],
+            name: "Invalid".into(),
+        },
+        CoreIconEdit::Website {
+            data: ICON_PNG.into(),
+            name: "Invalid".into(),
+            origin: "https://user:pass@icons.example/".into(),
+        },
+        CoreIconEdit::Website {
+            data: ICON_PNG.into(),
+            name: "Invalid".into(),
+            origin: "https://icons.example/private/".into(),
+        },
+    ] {
+        let mut change = edit("Rejected");
+        change.icon = Some(icon);
+        assert_eq!(
+            v.create_entry(before.info.root_id.clone(), change.clone()),
+            Err(CoreError::InvalidOperation)
+        );
+        assert_eq!(
+            v.update_entry(id.clone(), change),
+            Err(CoreError::InvalidOperation)
+        );
+    }
+    let after = v.snapshot().unwrap();
+    assert_eq!(after.entries.len(), before.entries.len());
+    assert!(!after.info.dirty);
+    assert_eq!(v.entry(id.clone()).unwrap().history_count, 0);
+    v.update_entry(id.clone(), edit("Ordinary edit")).unwrap();
+    v.save().unwrap();
+    let reopened = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    assert!(matches!(
+        reopened.entry(id).unwrap().icon,
+        Some(CoreIcon::BuiltIn { id: 1234 })
+    ));
+}
+
+#[test]
+#[ignore = "requires KeePassXC CLI; run cargo test -- --include-ignored"]
+fn keepassxc_icon_changes_and_history_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = fixture(dir.path(), false, false, 1, false);
+    let v = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    let id = v
+        .create_entry(v.snapshot().unwrap().info.root_id, edit("Icon test"))
+        .unwrap();
+    change_icon(&v, &id, CoreIconEdit::BuiltIn { id: 19 });
+    change_icon(
+        &v,
+        &id,
+        CoreIconEdit::Website {
+            data: ICON_PNG.into(),
+            name: "Interop icon".into(),
+            origin: "https://icons.example/".into(),
+        },
+    );
+    v.save().unwrap();
+    let xml = xc(&["export", "-q", &path(&p)], &format!("{PASSWORD}\n"));
+    let doc = roxmltree::Document::parse(std::str::from_utf8(&xml).unwrap()).unwrap();
+    assert!(doc
+        .descendants()
+        .any(|n| n.has_tag_name("Name") && n.text() == Some("Interop icon")));
+    assert!(doc.descendants().any(|n| n.has_tag_name("CustomIconUUID")
+        && n.text().is_some_and(|s| s != "AAAAAAAAAAAAAAAAAAAAAA==")));
+    assert!(doc
+        .descendants()
+        .any(|n| n.has_tag_name("IconID") && n.text() == Some("19")));
+    assert!(doc
+        .descendants()
+        .any(|n| n.has_tag_name("Data") && n.text().is_some_and(|s| s.starts_with("iVBORw0KGgo"))));
+    assert!(doc
+        .descendants()
+        .any(|n| n.has_tag_name("Key") && n.text() == Some("KeeLocker.WebsiteIcon.Origin")));
+    assert!(doc
+        .descendants()
+        .any(|n| n.has_tag_name("Value") && n.text() == Some("https://icons.example/")));
+    // An unrelated KeePassXC save preserves the encrypted CustomData and UUID.
+    xc(
+        &["edit", "-q", "-u", "synthetic-user", &path(&p), "Icon test"],
+        &format!("{PASSWORD}\n"),
+    );
+    let reopened = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    assert_eq!(
+        reopened
+            .entry(id.clone())
+            .unwrap()
+            .website_icon_origin
+            .as_deref(),
+        Some("https://icons.example/")
+    );
+    change_icon(&reopened, &id, CoreIconEdit::BuiltIn { id: 0 });
+    reopened.save().unwrap();
+    reopened.lock();
+    xc(
+        &[
+            "edit",
+            "-q",
+            "-u",
+            "synthetic-again",
+            &path(&p),
+            "Icon test",
+        ],
+        &format!("{PASSWORD}\n"),
+    );
+    let manual = CoreVault::open(path(&p), PASSWORD.into(), None).unwrap();
+    assert!(manual.entry(id).unwrap().has_explicit_icon);
+}
 
 #[test]
 #[ignore = "manual release-mode save timing with a realistic Argon2 cost"]
@@ -342,6 +723,7 @@ fn path(p: &Path) -> String {
 fn edit(title: &str) -> CoreEntryEdit {
     CoreEntryEdit {
         title: title.into(),
+        icon: None,
         username: "fixture-user".into(),
         password: "secret 🔐".into(),
         url: "https://example.test".into(),

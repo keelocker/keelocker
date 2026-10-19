@@ -12,6 +12,7 @@ fn path(p: &Path) -> String {
 fn edit(title: &str) -> CoreEntryEdit {
     CoreEntryEdit {
         title: title.into(),
+        icon: None,
         username: "user".into(),
         password: "synthetic-secret".into(),
         url: String::new(),

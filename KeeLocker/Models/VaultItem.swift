@@ -14,12 +14,32 @@ struct VaultItem: Identifiable, Hashable, Sendable {
     var isFavorite: Bool
     var iconName: String
     var iconColor: ItemColor
+    var icon: VaultEntryIcon?
+    // Encrypted with the entry; nil means an icon chosen independently of Website.
+    var websiteIconOrigin: URL?
+    var hasExplicitIcon = false
+    // Only an icon choice/import/download changes the KDBX icon during an edit.
+    var isIconModified = false
     var modifiedAt: Date
     var createdAt: Date?
     var attachments: [AttachmentMetadata] = []
     var historyCount: Int = 0
     // List snapshots omit secrets and must never replace a complete entry.
     var isRedacted = false
+
+    mutating func chooseIcon(_ icon: VaultEntryIcon) {
+        self.icon = icon
+        websiteIconOrigin = nil
+        hasExplicitIcon = true
+        isIconModified = true
+    }
+
+    mutating func useWebsiteIcon(_ icon: VaultCustomIcon, origin: URL) {
+        self.icon = .imported(icon)
+        websiteIconOrigin = origin
+        hasExplicitIcon = false
+        isIconModified = true
+    }
 
     init(
         id: UUID = UUID(),
@@ -80,6 +100,16 @@ struct OneTimePassword: Hashable, Sendable {
 }
 
 extension VaultItem {
+    var needsWebsiteIcon: Bool {
+        guard !isIconModified, !hasExplicitIcon else { return false }
+        if let websiteIconOrigin {
+            guard let current = FaviconDownloader.origin(for: website) else { return false }
+            return current != websiteIconOrigin
+        }
+        if case .builtIn(0) = icon { return true }
+        return icon == nil && iconName == "key.fill"
+    }
+
     static var empty: VaultItem {
         VaultItem(title: "", username: "", password: "", website: "", notes: "", tags: [],
                   group: .personal, iconName: "key.fill", iconColor: .indigo, modifiedAt: .distantPast)
@@ -126,6 +156,87 @@ enum ItemColor: String, Hashable, Sendable {
     case pink
     case purple
     case graphite
+}
+
+struct VaultCustomIcon: Identifiable, Hashable, Sendable {
+    let id: UUID
+    var name: String
+    let data: Data
+}
+
+enum VaultEntryIcon: Hashable, Sendable {
+    case builtIn(UInt64)
+    case custom(VaultCustomIcon)
+    case imported(VaultCustomIcon)
+
+    var name: String {
+        switch self {
+        case .builtIn(let id): StandardVaultIcon.find(id)?.name ?? "Key"
+        case .custom(let icon), .imported(let icon): icon.name
+        }
+    }
+
+    var imageData: Data? {
+        switch self {
+        case .builtIn: nil
+        case .custom(let icon), .imported(let icon): icon.data
+        }
+    }
+}
+
+struct StandardVaultIcon: Identifiable, Sendable {
+    let id: UInt64
+    let name: String
+    let symbol: String
+    let color: ItemColor
+
+    static func find(_ id: UInt64) -> StandardVaultIcon? {
+        all.first { $0.id == id }
+    }
+
+    // KDBX IDs are interoperable; SF Symbols are KeeLocker's presentation.
+    static let all: [StandardVaultIcon] = {
+        let definitions: [(String, String, ItemColor)] = [
+            ("Key", "key.fill", .indigo), ("Network", "network", .blue),
+            ("Warning", "exclamationmark.triangle.fill", .orange), ("Server", "server.rack", .graphite),
+            ("Clipboard", "clipboard.fill", .orange), ("Communication", "bubble.left.and.bubble.right.fill", .green),
+            ("Packages", "shippingbox.fill", .orange), ("Text editor", "square.and.pencil", .graphite),
+            ("Connection", "cable.connector", .blue), ("Identity", "person.fill", .blue),
+            ("Contacts", "person.crop.rectangle.fill", .green), ("Camera", "camera.fill", .graphite),
+            ("Wi-Fi", "wifi", .blue), ("Key ring", "key.horizontal.fill", .indigo),
+            ("Power", "bolt.fill", .orange), ("Scanner", "scanner.fill", .graphite),
+            ("Bookmarks", "bookmark.fill", .pink), ("Disc", "opticaldisc.fill", .graphite),
+            ("Display", "display", .blue), ("Email", "envelope.fill", .indigo),
+            ("Settings", "gearshape.fill", .graphite), ("Checklist", "checklist", .green),
+            ("Document", "doc.fill", .graphite), ("Desktop", "desktopcomputer", .blue),
+            ("Remote connection", "point.3.connected.trianglepath.dotted", .blue), ("Inbox", "tray.fill", .indigo),
+            ("Save", "externaldrive.fill", .blue), ("Remote storage", "externaldrive.connected.to.line.below.fill", .blue),
+            ("Media", "play.rectangle.fill", .pink), ("Secure shell", "lock.shield.fill", .green),
+            ("Terminal", "terminal.fill", .graphite), ("Printer", "printer.fill", .graphite),
+            ("Storage", "internaldrive.fill", .blue), ("Launch", "play.fill", .green),
+            ("Tools", "wrench.fill", .graphite), ("Internet", "globe", .blue),
+            ("Compression", "archivebox.fill", .orange), ("Percentage", "percent", .green),
+            ("Shared folder", "folder.badge.person.crop", .blue), ("Time", "clock.fill", .orange),
+            ("Search", "magnifyingglass", .blue), ("Graphics", "paintbrush.pointed.fill", .pink),
+            ("Memory", "memorychip.fill", .green), ("Trash", "trash.fill", .graphite),
+            ("Note", "note.text", .orange), ("Cancel", "xmark.circle.fill", .pink),
+            ("Help", "questionmark.circle.fill", .blue), ("Software", "app.fill", .purple),
+            ("Folder", "folder.fill", .blue), ("Open folder", "folder", .blue),
+            ("Archive", "archivebox", .orange), ("Unlocked", "lock.open.fill", .green),
+            ("Locked", "lock.fill", .indigo), ("Checkmark", "checkmark.circle.fill", .green),
+            ("Signature", "signature", .graphite), ("Picture", "photo.fill", .pink),
+            ("Address book", "person.crop.square.fill", .green), ("Table", "tablecells.fill", .blue),
+            ("Private key", "key.viewfinder", .indigo), ("Development", "chevron.left.forwardslash.chevron.right", .purple),
+            ("Home", "house.fill", .green), ("Favorite", "star.fill", .orange),
+            ("Linux", "terminal", .graphite), ("Web server", "server.rack", .orange),
+            ("Apple", "apple.logo", .graphite), ("Reference", "book.fill", .graphite),
+            ("Finance", "banknote.fill", .green), ("Certificate", "checkmark.seal.fill", .blue),
+            ("Mobile", "iphone", .blue)
+        ]
+        return definitions.enumerated().map { id, value in
+            Self(id: UInt64(id), name: value.0, symbol: value.1, color: value.2)
+        }
+    }()
 }
 
 enum SidebarSelection: Hashable {

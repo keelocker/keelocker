@@ -1,7 +1,168 @@
 import XCTest
+import AppKit
 
 @MainActor
 final class ToolbarHoverUITests: XCTestCase {
+    func testWebsiteIconControlsAndSettings() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault", "--ignore-last-vault", "-automaticallyDownloadWebsiteIcons", "NO"]
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        let edit = app.buttons["Edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.click()
+        app.buttons["entry.changeIcon"].click()
+        let download = app.buttons["icon.download"]
+        XCTAssertTrue(download.waitForExistence(timeout: 3))
+        XCTAssertTrue(download.isEnabled)
+        XCTAssertTrue(app.buttons["icon.import"].exists)
+        let picker = XCTAttachment(screenshot: app.screenshot())
+        picker.name = "website-icon-picker"
+        picker.lifetime = .keepAlways
+        add(picker)
+        app.typeKey(.escape, modifierFlags: [])
+        app.buttons["Cancel"].click()
+        app.typeKey("n", modifierFlags: .command)
+        app.buttons["entry.changeIcon"].click()
+        XCTAssertTrue(download.waitForExistence(timeout: 3))
+        XCTAssertFalse(download.isEnabled)
+        XCTAssertTrue(app.staticTexts["Add a website to download its icon."].exists)
+        app.typeKey(.escape, modifierFlags: [])
+        app.buttons["Cancel"].click()
+        app.typeKey(",", modifierFlags: .command)
+        let automatic = app.switches["settings.automaticWebsiteIcons"]
+        XCTAssertTrue(automatic.waitForExistence(timeout: 5))
+        XCTAssertFalse(["1", "on"].contains(automatic.value as? String ?? ""))
+        let settings = XCTAttachment(screenshot: app.screenshot())
+        settings.name = "website-icon-settings"
+        settings.lifetime = .keepAlways
+        add(settings)
+    }
+
+    func testEntryIconImportCancelSaveAndReuse() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("Synthetic Icon.png")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
+                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                   isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let pixels = try XCTUnwrap(bitmap.bitmapData)
+        for y in 0..<64 {
+            for x in 0..<64 {
+                let offset = y * bitmap.bytesPerRow + x * 4
+                pixels[offset] = 217
+                pixels[offset + 1] = 51
+                pixels[offset + 2] = 128
+                pixels[offset + 3] = 255
+            }
+        }
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault", "--ignore-last-vault"]
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        let edit = app.buttons["Edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.click()
+        let change = app.buttons["entry.changeIcon"]
+        let original = change.value as? String
+
+        func importIcon() {
+            change.click()
+            let add = app.buttons["icon.import"]
+            XCTAssertTrue(add.waitForExistence(timeout: 3))
+            add.click()
+            let choose = app.buttons["OKButton"]
+            XCTAssertTrue(choose.waitForExistence(timeout: 3))
+            app.searchFields["Search"].click()
+            app.typeKey("g", modifierFlags: [.command, .shift])
+            let path = app.textFields["PathTextField"]
+            XCTAssertTrue(path.waitForExistence(timeout: 3))
+            path.click()
+            app.typeKey("a", modifierFlags: .command)
+            path.typeText(url.path)
+            app.typeKey(.return, modifierFlags: [])
+            let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: choose)
+            wait(for: [ready], timeout: 5)
+            choose.click()
+            let imported = expectation(for: NSPredicate(format: "value == %@", "Synthetic Icon"), evaluatedWith: change)
+            wait(for: [imported], timeout: 5)
+        }
+
+        importIcon()
+        app.buttons["Cancel"].click()
+        edit.click()
+        XCTAssertEqual(change.value as? String, original)
+        importIcon()
+        app.buttons["Save"].click()
+        XCTAssertTrue(edit.waitForExistence(timeout: 3))
+        edit.click()
+        change.click()
+        let search = app.textFields["icon.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.click()
+        search.typeText("Synthetic Icon")
+        let stored = app.buttons["Synthetic Icon"]
+        XCTAssertTrue(stored.waitForExistence(timeout: 3))
+        stored.click()
+        XCTAssertEqual(change.value as? String, "Synthetic Icon")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "entry-imported-icon"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["Cancel"].click()
+    }
+
+    func testEntryIconPickerSearchSaveAndCancel() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault", "--ignore-last-vault"]
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        let edit = app.buttons["Edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.click()
+        let change = app.buttons["entry.changeIcon"]
+        XCTAssertTrue(change.waitForExistence(timeout: 3))
+        change.click()
+        let search = app.textFields["icon.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        app.activate()
+        search.click()
+        search.typeText("Email")
+        let filtered = expectation(for: NSPredicate(format: "value == %@", "Email"), evaluatedWith: search)
+        wait(for: [filtered], timeout: 3)
+        let email = app.buttons["icon.standard.19"]
+        XCTAssertTrue(email.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["icon.standard.64"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "entry-icon-picker"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        email.click()
+        XCTAssertEqual(change.value as? String, "Email")
+        app.buttons["Save"].click()
+        XCTAssertTrue(edit.waitForExistence(timeout: 3))
+        edit.click()
+        XCTAssertEqual(change.value as? String, "Email")
+        change.click()
+        let appleSearch = app.textFields["icon.search"]
+        XCTAssertTrue(appleSearch.waitForExistence(timeout: 3))
+        appleSearch.click()
+        appleSearch.typeText("Apple")
+        let apple = app.buttons["icon.standard.64"]
+        XCTAssertTrue(apple.waitForExistence(timeout: 3))
+        apple.click()
+        XCTAssertEqual(change.value as? String, "Apple")
+        app.buttons["Cancel"].click()
+        edit.click()
+        XCTAssertEqual(change.value as? String, "Email")
+        app.buttons["Cancel"].click()
+    }
+
     func testKeePassXCExternalSaveUpdatesUIAndConflictReloadRecovers() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

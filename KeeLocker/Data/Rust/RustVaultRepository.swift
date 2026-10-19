@@ -23,7 +23,6 @@ final class RustVaultRepository: VaultRepository {
     let supportsQuickUnlock = true
     private var url: URL
     private var session: CoreVault?
-    private var knownGroups: [VaultGroup] = []
     private var generation = UUID()
     private let loadAdmission: VaultLoadAdmission
     private let opening: any RustVaultOpening
@@ -80,7 +79,6 @@ final class RustVaultRepository: VaultRepository {
                 let vault = try await snapshot(opened)
                 guard !Task.isCancelled, generation == request else { throw CancellationError() }
                 session = opened
-                knownGroups = vault.groups
                 if let canonicalURL = vault.fileURL { url = canonicalURL }
                 return vault
             } catch {
@@ -100,7 +98,6 @@ final class RustVaultRepository: VaultRepository {
         loadRequest = nil
         let closing = session
         session = nil
-        knownGroups = []
         // Rust's mutex serializes with an in-flight save. Closing never blocks AppKit.
         Task.detached { closing?.lock() }
     }
@@ -147,7 +144,6 @@ final class RustVaultRepository: VaultRepository {
             }.value
             guard !Task.isCancelled, generation == request else { throw CancellationError() }
             if let url = result.vault.fileURL { self.url = url }
-            knownGroups = result.vault.groups
             return result
         } catch {
             if case .reload = command, (error as? CoreError) == .WrongCredentials {
@@ -171,7 +167,6 @@ final class RustVaultRepository: VaultRepository {
                 return try Self.map(session.snapshot())
             }.value
             guard !Task.isCancelled, generation == request else { throw CancellationError() }
-            if let vault { knownGroups = vault.groups }
             return vault
         } catch {
             if (error as? CoreError) == .WrongCredentials { throw VaultFailure.credentialsChanged }
@@ -181,21 +176,29 @@ final class RustVaultRepository: VaultRepository {
 
     func entry(_ id: UUID) async throws -> VaultEntry {
         guard let session else { throw VaultFailure.invalidOperation }
-        let groups = knownGroups
+        let request = generation
         do {
-            return try await Task.detached {
-                return try Self.map(session.entry(id: id.uuidString), groups: groups)
+            let result = try await Task.detached {
+                let source = try session.inspectEntry(id: id.uuidString, includeHistory: false)
+                return try Self.map(source.entry, groups: Self.groups(source.groups), icons: Self.iconIndex(Self.icons(source.customIcons)))
             }.value
+            guard !Task.isCancelled, generation == request else { throw CancellationError() }
+            return result
         } catch { throw Self.failure(error) }
     }
 
     func history(_ id: UUID) async throws -> [VaultEntry] {
         guard let session else { throw VaultFailure.invalidOperation }
-        let groups = knownGroups
+        let request = generation
         do {
-            return try await Task.detached {
-                return try session.history(entry: id.uuidString).map { try Self.map($0, groups: groups) }
+            let result = try await Task.detached {
+                let source = try session.inspectEntry(id: id.uuidString, includeHistory: true)
+                let groups = try Self.groups(source.groups)
+                let icons = try Self.iconIndex(Self.icons(source.customIcons))
+                return try source.history.map { try Self.map($0, groups: groups, icons: icons) }
             }.value
+            guard !Task.isCancelled, generation == request else { throw CancellationError() }
+            return result
         } catch { throw Self.failure(error) }
     }
 
@@ -213,7 +216,20 @@ final class RustVaultRepository: VaultRepository {
         CoreEntryEdit(title: item.title, username: item.username, password: item.password,
                       url: item.website, notes: item.notes,
                       tags: item.tags.filter { $0 != favoriteTag } + (item.isFavorite ? [favoriteTag] : []),
-                      customFields: item.customFields.map { CoreCustomField(name: $0.name, value: $0.value, protected: $0.isSensitive) })
+                      customFields: item.customFields.map { CoreCustomField(name: $0.name, value: $0.value, protected: $0.isSensitive) },
+                      icon: item.isIconModified ? iconEdit(item) : nil)
+    }
+
+    nonisolated private static func iconEdit(_ item: VaultEntry) -> CoreIconEdit? {
+        switch item.icon {
+        case .builtIn(let id): .builtIn(id: id)
+        case .custom(let icon): .custom(id: icon.id.uuidString)
+        case .imported(let icon):
+            if let origin = item.websiteIconOrigin {
+                .website(data: icon.data, name: icon.name, origin: origin.absoluteString)
+            } else { .import(data: icon.data, name: icon.name) }
+        case nil: nil
+        }
     }
 
     nonisolated private static func groups(_ source: [CoreGroup]) throws -> [VaultGroup] {
@@ -225,18 +241,31 @@ final class RustVaultRepository: VaultRepository {
         }
     }
 
+    nonisolated private static func icons(_ source: [CoreCustomIcon]) throws -> [VaultCustomIcon] {
+        try source.map { icon in
+            guard let id = UUID(uuidString: icon.id) else { throw VaultFailure.corruptedDatabase }
+            return VaultCustomIcon(id: id, name: icon.name ?? "Custom icon", data: icon.data)
+        }
+    }
+
     nonisolated private static func map(_ source: CoreSnapshot) throws -> Vault {
         let groups = try groups(source.groups)
+        let icons = try icons(source.customIcons)
+        let index = iconIndex(icons)
         return try Vault(name: source.info.name, groups: groups,
                          entries: source.entries.map {
-                             var summary = try map($0, groups: groups)
+                             var summary = try map($0, groups: groups, icons: index)
                              summary.isRedacted = true
                              return summary
                          },
-                         isDirty: source.info.dirty, fileURL: URL(fileURLWithPath: source.info.path))
+                         isDirty: source.info.dirty, fileURL: URL(fileURLWithPath: source.info.path), customIcons: icons)
     }
 
-    nonisolated private static func map(_ e: CoreEntry, groups: [VaultGroup]) throws -> VaultEntry {
+    nonisolated private static func iconIndex(_ icons: [VaultCustomIcon]) -> [UUID: VaultCustomIcon] {
+        Dictionary(icons.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    nonisolated private static func map(_ e: CoreEntry, groups: [VaultGroup], icons: [UUID: VaultCustomIcon]) throws -> VaultEntry {
         guard let id = UUID(uuidString: e.id), let groupID = UUID(uuidString: e.groupId),
               let group = groups.first(where: { $0.id == groupID }) else { throw VaultFailure.corruptedDatabase }
         var result = VaultEntry(id: id, title: e.title, username: e.username, password: e.password,
@@ -248,6 +277,18 @@ final class RustVaultRepository: VaultRepository {
                                createdAt: e.createdAt.map { Date(timeIntervalSince1970: Double($0)) })
         result.attachments = e.attachments.map { AttachmentMetadata(name: $0.name, size: $0.size) }
         result.historyCount = Int(clamping: e.historyCount)
+        result.hasExplicitIcon = e.hasExplicitIcon
+        switch e.icon {
+        case .builtIn(let id): result.icon = .builtIn(id)
+        case .custom(let id):
+            guard let uuid = UUID(uuidString: id), let icon = icons[uuid] else { throw VaultFailure.corruptedDatabase }
+            result.icon = .custom(icon)
+        case nil: break
+        }
+        if let origin = e.websiteIconOrigin,
+           let normalized = FaviconDownloader.origin(for: origin), normalized.absoluteString == origin {
+            result.websiteIconOrigin = normalized
+        }
         return result
     }
 

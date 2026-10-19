@@ -303,6 +303,11 @@ RustBuffer uniffi_keelocker_core_fn_method_corevault_entry(uint64_t ptr, RustBuf
 RustBuffer uniffi_keelocker_core_fn_method_corevault_history(uint64_t ptr, RustBuffer entry, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_INSPECT_ENTRY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_INSPECT_ENTRY
+RustBuffer uniffi_keelocker_core_fn_method_corevault_inspect_entry(uint64_t ptr, RustBuffer id, int8_t include_history, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_KEY_MATERIAL
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_KEY_MATERIAL
 RustBuffer uniffi_keelocker_core_fn_method_corevault_key_material(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -668,6 +673,12 @@ uint16_t uniffi_keelocker_core_checksum_method_corevault_entry(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_HISTORY
 uint16_t uniffi_keelocker_core_checksum_method_corevault_history(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_INSPECT_ENTRY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_INSPECT_ENTRY
+uint16_t uniffi_keelocker_core_checksum_method_corevault_inspect_entry(void
     
 );
 #endif

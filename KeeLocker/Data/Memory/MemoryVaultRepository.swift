@@ -20,10 +20,10 @@ final class MemoryVaultRepository: VaultRepository {
     func execute(_ command: VaultCommand) async throws -> VaultCommandResult {
         switch command {
         case .reload: break
-        case .createEntry(let entry): vault.entries.insert(entry, at: 0)
+        case .createEntry(let entry): vault.entries.insert(committed(entry), at: 0)
         case .updateEntry(let entry):
             guard let i = vault.entries.firstIndex(where: { $0.id == entry.id }) else { throw VaultFailure.invalidOperation }
-            vault.entries[i] = entry
+            vault.entries[i] = committed(entry)
         case .deleteEntry(let id): vault.entries.removeAll { $0.id == id }
         case .moveEntry(let id, let groupID):
             guard let i = vault.entries.firstIndex(where: { $0.id == id }),
@@ -51,6 +51,17 @@ final class MemoryVaultRepository: VaultRepository {
         default: throw VaultFailure.invalidOperation
         }
         return VaultCommandResult(vault: vault)
+    }
+
+    private func committed(_ entry: VaultEntry) -> VaultEntry {
+        var result = entry
+        if case .imported(let icon) = result.icon {
+            let stored = vault.customIcons.first { $0.data == icon.data } ?? icon
+            if !vault.customIcons.contains(where: { $0.id == stored.id }) { vault.customIcons.append(stored) }
+            result.icon = .custom(stored)
+        }
+        result.isIconModified = false
+        return result
     }
 
     private func rebuildPaths() {

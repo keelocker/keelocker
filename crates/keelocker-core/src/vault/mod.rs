@@ -4,7 +4,7 @@ use crate::{
     CoreError,
 };
 use keepass::{
-    db::{EntryId, GroupId, Times, Value},
+    db::{CustomDataItem, CustomDataValue, EntryId, GroupId, Icon, Times, Value},
     Database, DatabaseKey,
 };
 use std::{
@@ -234,6 +234,7 @@ impl CoreVault {
                     .iter_all_entries()
                     .map(|e| mapping::entry(e, false))
                     .collect(),
+                custom_icons: mapping::custom_icons(&s.db),
             })
         })
     }
@@ -248,9 +249,57 @@ impl CoreVault {
         })
     }
 
+    // Read reference-dependent details and their catalogs under the same mutex.
+    pub fn inspect_entry(
+        &self,
+        id: String,
+        include_history: bool,
+    ) -> Result<CoreEntryInspection, CoreError> {
+        self.with(|s| {
+            let entry =
+                s.db.entry(entry_id(&id)?)
+                    .ok_or(CoreError::InvalidOperation)?;
+            let mut icon_ids = std::collections::HashSet::new();
+            if let Some(Icon::Custom(id)) = entry.icon() {
+                icon_ids.insert(*id);
+            }
+            let history = if include_history {
+                let count = entry.history.as_ref().map_or(0, |h| h.get_entries().len());
+                (0..count)
+                    .filter_map(|i| entry.historical(i))
+                    .map(|h| {
+                        if let Some(Icon::Custom(id)) = h.icon() {
+                            icon_ids.insert(*id);
+                        }
+                        mapping::entry_in_group(h, true, entry.parent().id().to_string())
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let mut custom_icons: Vec<_> = icon_ids
+                .into_iter()
+                .filter_map(|id| s.db.custom_icon(id))
+                .map(|icon| CoreCustomIcon {
+                    id: icon.id().to_string(),
+                    name: icon.name.clone(),
+                    data: icon.data.clone(),
+                })
+                .collect();
+            custom_icons.sort_by(|a, b| a.id.cmp(&b.id));
+            Ok(CoreEntryInspection {
+                entry: mapping::entry(entry, true),
+                history,
+                groups: mapping::groups(&s.db),
+                custom_icons,
+            })
+        })
+    }
+
     pub fn create_entry(&self, group: String, edit: CoreEntryEdit) -> Result<String, CoreError> {
         validate_edit(&edit)?;
         self.with(|s| {
+            validate_icon(&s.db, &edit.icon)?;
             let id =
                 s.db.group_mut(group_id(&group)?)
                     .ok_or(CoreError::InvalidOperation)?
@@ -265,6 +314,7 @@ impl CoreVault {
     pub fn update_entry(&self, id: String, edit: CoreEntryEdit) -> Result<(), CoreError> {
         validate_edit(&edit)?;
         self.with(|s| {
+            validate_icon(&s.db, &edit.icon)?;
             apply_edit(&mut s.db, entry_id(&id)?, edit)?;
             s.dirty = true;
             Ok(())
@@ -449,9 +499,113 @@ fn validate_edit(edit: &CoreEntryEdit) -> Result<(), CoreError> {
     Ok(())
 }
 
+fn validate_icon(db: &Database, icon: &Option<CoreIconEdit>) -> Result<(), CoreError> {
+    let valid = match icon {
+        None => true,
+        Some(CoreIconEdit::BuiltIn { id }) => *id <= 68,
+        Some(CoreIconEdit::Custom { id }) => custom_icon_id(db, id).is_ok(),
+        Some(CoreIconEdit::Import { data, name } | CoreIconEdit::Website { data, name, .. }) => {
+            data.len() <= 1024 * 1024
+                && data.starts_with(b"\x89PNG\r\n\x1a\n")
+                && name.len() <= 1024
+        }
+    };
+    let valid_origin = match icon {
+        Some(CoreIconEdit::Website { origin, .. }) => {
+            origin
+                .strip_prefix("https://")
+                .and_then(|s| s.strip_suffix('/'))
+                .is_some_and(|host| !host.is_empty() && !host.contains('/'))
+                && origin.len() <= 2048
+                && !origin.chars().any(|c| {
+                    c.is_whitespace() || c.is_control() || ['@', '?', '#', '\\'].contains(&c)
+                })
+        }
+        _ => true,
+    };
+    if valid && valid_origin {
+        Ok(())
+    } else {
+        Err(CoreError::InvalidOperation)
+    }
+}
+
+fn custom_icon_id(db: &Database, id: &str) -> Result<keepass::db::CustomIconId, CoreError> {
+    let uuid = Uuid::parse_str(id).map_err(|_| CoreError::InvalidOperation)?;
+    db.iter_all_custom_icons()
+        .find(|icon| icon.id().uuid() == uuid)
+        .map(|icon| icon.id())
+        .ok_or(CoreError::InvalidOperation)
+}
+
 fn apply_edit(db: &mut Database, id: EntryId, edit: CoreEntryEdit) -> Result<(), CoreError> {
+    // Resolve references before creating a history checkpoint or changing fields.
+    let custom = match &edit.icon {
+        Some(CoreIconEdit::Custom { id }) => Some(custom_icon_id(db, id)?),
+        Some(CoreIconEdit::Import { data, .. } | CoreIconEdit::Website { data, .. }) => db
+            .iter_all_custom_icons()
+            .find(|i| i.data == *data)
+            .map(|i| i.id()),
+        _ => None,
+    };
     let mut e = db.entry_mut(id).ok_or(CoreError::InvalidOperation)?;
     let mut track = e.track_changes();
+    let icon_modified = edit.icon.is_some();
+    if edit.icon.is_some() {
+        // A manual choice clears provenance; unrelated edits preserve it.
+        track.custom_data.remove(mapping::WEBSITE_ICON_ORIGIN);
+        track.custom_data.remove(mapping::WEBSITE_ICON_UUID);
+        track.custom_data.remove(mapping::MANUAL_ICON);
+    }
+    let origin = match &edit.icon {
+        Some(CoreIconEdit::Website { origin, .. }) => Some(origin.clone()),
+        _ => None,
+    };
+    match edit.icon {
+        None => {}
+        Some(CoreIconEdit::BuiltIn { id }) => track.set_icon_builtin(id as usize),
+        Some(CoreIconEdit::Custom { .. }) => track
+            .set_icon_custom(custom.ok_or(CoreError::InvalidOperation)?)
+            .map_err(|_| CoreError::InvalidOperation)?,
+        Some(CoreIconEdit::Import { data, name } | CoreIconEdit::Website { data, name, .. }) => {
+            if let Some(id) = custom {
+                track
+                    .set_icon_custom(id)
+                    .map_err(|_| CoreError::InvalidOperation)?;
+            } else {
+                track.set_icon_custom_new(data).name = Some(name);
+            }
+        }
+    }
+    if let Some(origin) = origin {
+        let Some(Icon::Custom(icon_id)) = track.icon() else {
+            return Err(CoreError::InvalidOperation);
+        };
+        let icon_id = icon_id.to_string();
+        for (key, value) in [
+            (mapping::WEBSITE_ICON_ORIGIN, origin),
+            (mapping::WEBSITE_ICON_UUID, icon_id),
+        ] {
+            track.custom_data.insert(
+                key.into(),
+                CustomDataItem {
+                    value: Some(CustomDataValue::String(value)),
+                    last_modification_time: Some(Times::now()),
+                },
+            );
+        }
+    } else if icon_modified {
+        if let Some(icon) = track.icon() {
+            let identity = mapping::icon_identity(icon);
+            track.custom_data.insert(
+                mapping::MANUAL_ICON.into(),
+                CustomDataItem {
+                    value: Some(CustomDataValue::String(identity)),
+                    last_modification_time: Some(Times::now()),
+                },
+            );
+        }
+    }
     for (key, value) in [
         ("Title", edit.title),
         ("UserName", edit.username),
@@ -536,6 +690,7 @@ mod persistence_recovery_tests {
                     notes: String::new(),
                     tags: vec![],
                     custom_fields: vec![],
+                    icon: None,
                 },
             )
             .unwrap();

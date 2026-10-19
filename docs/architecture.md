@@ -102,6 +102,90 @@ Tag input stays verbatim in the editing draft. Split semicolon-delimited input,
 trim each tag and remove empty values only when constructing the saved entry.
 Reformatting after every keystroke can change the next typed value.
 
+## Entry icons
+
+Entries expose standard KDBX icon IDs or custom icon references through the
+application models; Rust DTOs remain inside the Rust adapter. SF Symbols and tile
+colors are presentation mappings for the 69 standard KeePass IDs. The demo's
+existing artwork remains the fallback until an explicit icon choice is saved.
+Unrecognized stored standard IDs use a visual fallback and survive unrelated
+edits. A nil icon edit means preserve, rather than clear or replace.
+
+Snapshots include a vault-scoped catalog of custom UUIDs, names and image bytes,
+including icons retained by history or groups. Detail/history reads use
+`inspect_entry`, which returns their groups, icons and requested history under
+one Rust session mutex; inspections copy only the images referenced by the
+requested entry/history. The adapter builds a UUID index once and maps references from that same inspection,
+instead of combining fresh entries with cached catalogs from another revision.
+It generation-checks the mapped result before returning it. Lock clears the
+application catalog together with the session.
+
+The picker updates only the editing draft. Image import reads and decodes off
+the main thread, limits source size to 20 MiB and dimensions to 16,384 per side
+and 40 million pixels, and normalizes to a PNG thumbnail at most 128 pixels.
+Import completion is bound to an editor token captured when the native picker
+opens, and is discarded after Cancel, Save, a new choice or disappearance.
+The core accepts PNG imports up to 1 MiB, validates selected IDs before mutation,
+and commits changes through existing history tracking. Equal imported bytes
+reuse an existing asset without changing its UUID/name; retained history and
+other owners keep their assets. Group icon editing is not exposed.
+
+[FaviconDownloader](../KeeLocker/Data/macOS/FaviconDownloader.swift) is an injected
+Swift networking service, independent of Rust and vault credentials. It requests
+only a sanitized HTTPS origin, scans bounded HTML once with cancellation checks,
+examines up to 32 advertised links, tries five
+with larger/touch icons preferred, and falls back to `/favicon.ico`.
+Redirects must remain HTTPS without URL credentials
+and are capped at three per request. Ephemeral sessions disable cookies,
+credential storage and disk cache; streamed responses are capped at 1 MiB for
+HTML and 4 MiB for images, with request/resource timeouts. Existing image limits
+and PNG normalization apply off the main thread. Multi-size ICO images use their largest valid representation;
+animated images use the first frame. HTTP Websites are attempted
+over HTTPS; no insecure fallback or external favicon service is used.
+
+Manual downloads reuse the editor import generation: Cancel, Save, a different
+choice, Website changes or disappearance invalidate their results. They remain
+drafts until Save. The global `automaticallyDownloadWebsiteIcons` preference is
+off by default; RootView binds it to VaultStore. Enabling it or applying a vault
+starts a serial queue for entries with standard icon 0 (or an unassigned default
+key), and for downloaded icons whose saved origin differs from the current
+Website origin. Path/query/fragment changes within one origin do not refresh.
+Explicit icon choices, including standard key 0, suppress automatic replacement
+across URL changes and reopened sessions. Their current built-in ID or custom
+UUID is stored under `KeeLocker.Icon.Manual` in encrypted entry CustomData. The
+marker is trusted only when it matches the current icon, is preserved by unrelated
+edits and is cleared by a website download. Other standard IDs and custom images
+without website provenance are preserved as well.
+
+Both manual and automatic website downloads save the sanitized origin and the
+resolved custom icon UUID in encrypted entry CustomData under
+`KeeLocker.WebsiteIcon.Origin` and `KeeLocker.WebsiteIcon.UUID`. Unrelated edits
+preserve these values, including a changed Website awaiting refresh. Choosing a
+standard/custom icon or importing a file clears them. The mapping trusts origin
+metadata only when its UUID matches the current icon, so another client's icon
+change invalidates stale provenance. History retains each version's provenance
+with its image. Existing custom icons without provenance remain fixed; Download
+from website associates the new image with the Website for future changes.
+
+Automatic requests leave the UI usable, pause during drafts or history inspection,
+and defer during busy/dirty state, pending refresh or an operation failure. Before
+mutation, the store reserves the busy slot, obtains a complete current entry and
+rechecks the session, preference generation, snapshot revision, Website and icon
+eligibility. It then runs the existing update command, retaining history, autosave,
+backup and conflict behavior. A save already admitted can finish after revocation.
+Candidate queues are built once per snapshot; failed origins skip remaining
+entries directly rather than repeatedly scanning and normalizing the whole vault.
+Temporary busy/refresh guards retain the candidate and resume from its cached
+download even when the refresh reports no changed snapshot.
+Obsolete/detail-read attempts suppress retries only for their snapshot, so an
+external edit cannot permanently block a later return to the same Website.
+Successful attempts must not block that return either; persisted origin controls
+eligibility. One result per origin (including failure) is reused during the session; failed
+sites are retried on re-enable or a new session. Lock/replacement clears all
+download caches, origins and attempt metadata. Nothing is written to preferences
+except the boolean; networking errors are quiet in automatic mode, while save
+failures use the normal unsaved warning.
+
 ## Clipboard lifetime
 
 [ClipboardOwner](../KeeLocker/Data/macOS/ClipboardOwner.swift) owns the most
