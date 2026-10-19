@@ -3,7 +3,7 @@ import AppKit
 /// Owns only the latest value copied by this process, without retaining its contents.
 @MainActor
 final class ClipboardOwner {
-    typealias CleanupScheduler = (TimeInterval, @escaping @MainActor () -> Void) -> Void
+    typealias CleanupScheduler = (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void
 
     static let shared = ClipboardOwner()
 

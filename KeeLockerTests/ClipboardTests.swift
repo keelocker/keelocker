@@ -173,9 +173,9 @@ private final class SyntheticClipboardPolicy {
 @MainActor
 private final class SyntheticClipboardClock {
     private(set) var delays: [TimeInterval] = []
-    private var cleanups: [@MainActor () -> Void] = []
+    private var cleanups: [@MainActor @Sendable () -> Void] = []
 
-    func schedule(_ delay: TimeInterval, _ cleanup: @escaping @MainActor () -> Void) {
+    func schedule(_ delay: TimeInterval, _ cleanup: @escaping @MainActor @Sendable () -> Void) {
         delays.append(delay)
         cleanups.append(cleanup)
     }
