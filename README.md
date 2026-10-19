@@ -38,6 +38,24 @@ See [Session Quick Unlock](docs/touch-id.md) for the protection model and limits
 - Edit entries, nested groups, tags and protected custom fields. Add, replace,
   delete and export attachments; inspect entry history. Empty groups can be
   deleted; deleting an entry records a tombstone.
+- Display and choose entry icons: all 69 standard KeePass icons appear as native
+  SF Symbols, and custom images embedded in the vault are displayed as images.
+  In Edit, click the entry icon to choose one or import an image. Selection and
+  import remain drafts until Save; Cancel does not modify the vault. Imported
+  images are resized to at most 128 pixels and stored as PNG inside the KDBX.
+- Download website icons from the entry icon picker, with a preview in the draft
+  before Save. Settings → Website icons offers automatic downloads, off by
+  default. Enabling it fills default key icons in the unlocked vault and does
+  the same on later opens and saved logins. Downloaded icons follow Website domain
+  changes after Save, including after reopening the vault; manually chosen icons
+  are kept, including a deliberately selected standard key. Changing only the
+  path/query does not refresh an icon. Existing custom icons stay fixed until
+  you use Download from website to associate them with the Website.
+  Downloads contact the website origin and its advertised icon hosts over HTTPS,
+  without stored URL credentials, paths, queries, cookies or third-party icon
+  services. HTTP entry URLs are tried over HTTPS. No icon request occurs without
+  the manual action or enabled preference. Network failures leave the prior icon;
+  automatic saves retain normal backup and conflict handling.
 - Display live TOTP from recognized `otp` otpauth URIs. Extra URLs remain custom
   fields; HOTP and unknown OTP kinds remain raw fields without TOTP display.
   Favorites use the standard tag `KeeLocker:Favorite`.
@@ -52,7 +70,7 @@ See [Session Quick Unlock](docs/touch-id.md) for the protection model and limits
   outside the main thread.
 
 Database creation, master-key changes, automatic merge, history restoration,
-recycle-bin UI, field-reference expansion, auto-type execution, icon editing,
+recycle-bin UI, field-reference expansion, auto-type execution, group icon editing,
 persistent Keychain unlock, cloud sync and hardware keys are not implemented.
 Twofish is outside the tested interoperability matrix.
 

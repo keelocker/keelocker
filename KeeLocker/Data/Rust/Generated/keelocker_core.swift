@@ -603,6 +603,8 @@ public protocol CoreVaultProtocol: AnyObject, Sendable {
     
     func history(entry: String) throws  -> [CoreEntry]
     
+    func inspectEntry(id: String, includeHistory: Bool) throws  -> CoreEntryInspection
+    
     /**
      * Secret, versioned pre-KDF components for the host's session-only quick unlock.
      */
@@ -785,6 +787,17 @@ open func history(entry: String)throws  -> [CoreEntry]  {
     uniffi_keelocker_core_fn_method_corevault_history(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(entry),uniffiCallStatus
+    )
+})
+}
+    
+open func inspectEntry(id: String, includeHistory: Bool)throws  -> CoreEntryInspection  {
+    return try  FfiConverterTypeCoreEntryInspection_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_method_corevault_inspect_entry(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterBool.lower(includeHistory),uniffiCallStatus
     )
 })
 }
@@ -1063,6 +1076,64 @@ public func FfiConverterTypeCoreCustomField_lower(_ value: CoreCustomField) -> R
 }
 
 
+public struct CoreCustomIcon: Equatable, Hashable {
+    public var id: String
+    public var name: String?
+    public var data: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String?, data: Data) {
+        self.id = id
+        self.name = name
+        self.data = data
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CoreCustomIcon: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreCustomIcon: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreCustomIcon {
+        return
+            try CoreCustomIcon(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf), 
+                data: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CoreCustomIcon, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterData.write(value.data, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreCustomIcon_lift(_ buf: RustBuffer) throws -> CoreCustomIcon {
+    return try FfiConverterTypeCoreCustomIcon.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreCustomIcon_lower(_ value: CoreCustomIcon) -> RustBuffer {
+    return FfiConverterTypeCoreCustomIcon.lower(value)
+}
+
+
 public struct CoreEntry: Equatable, Hashable {
     public var id: String
     public var groupId: String
@@ -1078,10 +1149,13 @@ public struct CoreEntry: Equatable, Hashable {
     public var createdAt: Int64?
     public var modifiedAt: Int64?
     public var otp: CoreOtp?
+    public var icon: CoreIcon?
+    public var websiteIconOrigin: String?
+    public var hasExplicitIcon: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, groupId: String, title: String, username: String, password: String, url: String, notes: String, tags: [String], customFields: [CoreCustomField], attachments: [CoreAttachmentMetadata], historyCount: UInt64, createdAt: Int64?, modifiedAt: Int64?, otp: CoreOtp?) {
+    public init(id: String, groupId: String, title: String, username: String, password: String, url: String, notes: String, tags: [String], customFields: [CoreCustomField], attachments: [CoreAttachmentMetadata], historyCount: UInt64, createdAt: Int64?, modifiedAt: Int64?, otp: CoreOtp?, icon: CoreIcon?, websiteIconOrigin: String?, hasExplicitIcon: Bool) {
         self.id = id
         self.groupId = groupId
         self.title = title
@@ -1096,6 +1170,9 @@ public struct CoreEntry: Equatable, Hashable {
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.otp = otp
+        self.icon = icon
+        self.websiteIconOrigin = websiteIconOrigin
+        self.hasExplicitIcon = hasExplicitIcon
     }
 
     
@@ -1127,7 +1204,10 @@ public struct FfiConverterTypeCoreEntry: FfiConverterRustBuffer {
                 historyCount: FfiConverterUInt64.read(from: &buf), 
                 createdAt: FfiConverterOptionInt64.read(from: &buf), 
                 modifiedAt: FfiConverterOptionInt64.read(from: &buf), 
-                otp: FfiConverterOptionTypeCoreOtp.read(from: &buf)
+                otp: FfiConverterOptionTypeCoreOtp.read(from: &buf), 
+                icon: FfiConverterOptionTypeCoreIcon.read(from: &buf), 
+                websiteIconOrigin: FfiConverterOptionString.read(from: &buf), 
+                hasExplicitIcon: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -1146,6 +1226,9 @@ public struct FfiConverterTypeCoreEntry: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.createdAt, into: &buf)
         FfiConverterOptionInt64.write(value.modifiedAt, into: &buf)
         FfiConverterOptionTypeCoreOtp.write(value.otp, into: &buf)
+        FfiConverterOptionTypeCoreIcon.write(value.icon, into: &buf)
+        FfiConverterOptionString.write(value.websiteIconOrigin, into: &buf)
+        FfiConverterBool.write(value.hasExplicitIcon, into: &buf)
     }
 }
 
@@ -1173,10 +1256,11 @@ public struct CoreEntryEdit: Equatable, Hashable {
     public var notes: String
     public var tags: [String]
     public var customFields: [CoreCustomField]
+    public var icon: CoreIconEdit?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(title: String, username: String, password: String, url: String, notes: String, tags: [String], customFields: [CoreCustomField]) {
+    public init(title: String, username: String, password: String, url: String, notes: String, tags: [String], customFields: [CoreCustomField], icon: CoreIconEdit?) {
         self.title = title
         self.username = username
         self.password = password
@@ -1184,6 +1268,7 @@ public struct CoreEntryEdit: Equatable, Hashable {
         self.notes = notes
         self.tags = tags
         self.customFields = customFields
+        self.icon = icon
     }
 
     
@@ -1208,7 +1293,8 @@ public struct FfiConverterTypeCoreEntryEdit: FfiConverterRustBuffer {
                 url: FfiConverterString.read(from: &buf), 
                 notes: FfiConverterString.read(from: &buf), 
                 tags: FfiConverterSequenceString.read(from: &buf), 
-                customFields: FfiConverterSequenceTypeCoreCustomField.read(from: &buf)
+                customFields: FfiConverterSequenceTypeCoreCustomField.read(from: &buf), 
+                icon: FfiConverterOptionTypeCoreIconEdit.read(from: &buf)
         )
     }
 
@@ -1220,6 +1306,7 @@ public struct FfiConverterTypeCoreEntryEdit: FfiConverterRustBuffer {
         FfiConverterString.write(value.notes, into: &buf)
         FfiConverterSequenceString.write(value.tags, into: &buf)
         FfiConverterSequenceTypeCoreCustomField.write(value.customFields, into: &buf)
+        FfiConverterOptionTypeCoreIconEdit.write(value.icon, into: &buf)
     }
 }
 
@@ -1236,6 +1323,68 @@ public func FfiConverterTypeCoreEntryEdit_lift(_ buf: RustBuffer) throws -> Core
 #endif
 public func FfiConverterTypeCoreEntryEdit_lower(_ value: CoreEntryEdit) -> RustBuffer {
     return FfiConverterTypeCoreEntryEdit.lower(value)
+}
+
+
+public struct CoreEntryInspection: Equatable, Hashable {
+    public var entry: CoreEntry
+    public var history: [CoreEntry]
+    public var groups: [CoreGroup]
+    public var customIcons: [CoreCustomIcon]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entry: CoreEntry, history: [CoreEntry], groups: [CoreGroup], customIcons: [CoreCustomIcon]) {
+        self.entry = entry
+        self.history = history
+        self.groups = groups
+        self.customIcons = customIcons
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CoreEntryInspection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreEntryInspection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreEntryInspection {
+        return
+            try CoreEntryInspection(
+                entry: FfiConverterTypeCoreEntry.read(from: &buf), 
+                history: FfiConverterSequenceTypeCoreEntry.read(from: &buf), 
+                groups: FfiConverterSequenceTypeCoreGroup.read(from: &buf), 
+                customIcons: FfiConverterSequenceTypeCoreCustomIcon.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CoreEntryInspection, into buf: inout [UInt8]) {
+        FfiConverterTypeCoreEntry.write(value.entry, into: &buf)
+        FfiConverterSequenceTypeCoreEntry.write(value.history, into: &buf)
+        FfiConverterSequenceTypeCoreGroup.write(value.groups, into: &buf)
+        FfiConverterSequenceTypeCoreCustomIcon.write(value.customIcons, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreEntryInspection_lift(_ buf: RustBuffer) throws -> CoreEntryInspection {
+    return try FfiConverterTypeCoreEntryInspection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreEntryInspection_lower(_ value: CoreEntryInspection) -> RustBuffer {
+    return FfiConverterTypeCoreEntryInspection.lower(value)
 }
 
 
@@ -1367,13 +1516,15 @@ public struct CoreSnapshot: Equatable, Hashable {
     public var info: CoreVaultInfo
     public var groups: [CoreGroup]
     public var entries: [CoreEntry]
+    public var customIcons: [CoreCustomIcon]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(info: CoreVaultInfo, groups: [CoreGroup], entries: [CoreEntry]) {
+    public init(info: CoreVaultInfo, groups: [CoreGroup], entries: [CoreEntry], customIcons: [CoreCustomIcon]) {
         self.info = info
         self.groups = groups
         self.entries = entries
+        self.customIcons = customIcons
     }
 
     
@@ -1394,7 +1545,8 @@ public struct FfiConverterTypeCoreSnapshot: FfiConverterRustBuffer {
             try CoreSnapshot(
                 info: FfiConverterTypeCoreVaultInfo.read(from: &buf), 
                 groups: FfiConverterSequenceTypeCoreGroup.read(from: &buf), 
-                entries: FfiConverterSequenceTypeCoreEntry.read(from: &buf)
+                entries: FfiConverterSequenceTypeCoreEntry.read(from: &buf), 
+                customIcons: FfiConverterSequenceTypeCoreCustomIcon.read(from: &buf)
         )
     }
 
@@ -1402,6 +1554,7 @@ public struct FfiConverterTypeCoreSnapshot: FfiConverterRustBuffer {
         FfiConverterTypeCoreVaultInfo.write(value.info, into: &buf)
         FfiConverterSequenceTypeCoreGroup.write(value.groups, into: &buf)
         FfiConverterSequenceTypeCoreEntry.write(value.entries, into: &buf)
+        FfiConverterSequenceTypeCoreCustomIcon.write(value.customIcons, into: &buf)
     }
 }
 
@@ -1589,6 +1742,173 @@ public func FfiConverterTypeCoreError_lower(_ value: CoreError) -> RustBuffer {
     return FfiConverterTypeCoreError.lower(value)
 }
 
+
+
+public enum CoreIcon: Equatable, Hashable {
+    
+    case builtIn(id: UInt64
+    )
+    case custom(id: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CoreIcon: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreIcon: FfiConverterRustBuffer {
+    typealias SwiftType = CoreIcon
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreIcon {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .builtIn(id: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 2: return .custom(id: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CoreIcon, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .builtIn(id):
+            writeInt(&buf, Int32(1))
+            FfiConverterUInt64.write(id, into: &buf)
+            
+        
+        case let .custom(id):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(id, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreIcon_lift(_ buf: RustBuffer) throws -> CoreIcon {
+    return try FfiConverterTypeCoreIcon.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreIcon_lower(_ value: CoreIcon) -> RustBuffer {
+    return FfiConverterTypeCoreIcon.lower(value)
+}
+
+
+
+
+public enum CoreIconEdit: Equatable, Hashable {
+    
+    case builtIn(id: UInt64
+    )
+    case custom(id: String
+    )
+    case `import`(data: Data, name: String
+    )
+    case website(data: Data, name: String, origin: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CoreIconEdit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreIconEdit: FfiConverterRustBuffer {
+    typealias SwiftType = CoreIconEdit
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreIconEdit {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .builtIn(id: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 2: return .custom(id: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 3: return .`import`(data: try FfiConverterData.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 4: return .website(data: try FfiConverterData.read(from: &buf), name: try FfiConverterString.read(from: &buf), origin: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CoreIconEdit, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .builtIn(id):
+            writeInt(&buf, Int32(1))
+            FfiConverterUInt64.write(id, into: &buf)
+            
+        
+        case let .custom(id):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(id, into: &buf)
+            
+        
+        case let .`import`(data,name):
+            writeInt(&buf, Int32(3))
+            FfiConverterData.write(data, into: &buf)
+            FfiConverterString.write(name, into: &buf)
+            
+        
+        case let .website(data,name,origin):
+            writeInt(&buf, Int32(4))
+            FfiConverterData.write(data, into: &buf)
+            FfiConverterString.write(name, into: &buf)
+            FfiConverterString.write(origin, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreIconEdit_lift(_ buf: RustBuffer) throws -> CoreIconEdit {
+    return try FfiConverterTypeCoreIconEdit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreIconEdit_lower(_ value: CoreIconEdit) -> RustBuffer {
+    return FfiConverterTypeCoreIconEdit.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1664,6 +1984,54 @@ fileprivate struct FfiConverterOptionTypeCoreOtp: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeCoreIcon: FfiConverterRustBuffer {
+    typealias SwiftType = CoreIcon?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCoreIcon.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCoreIcon.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeCoreIconEdit: FfiConverterRustBuffer {
+    typealias SwiftType = CoreIconEdit?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCoreIconEdit.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCoreIconEdit.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1731,6 +2099,31 @@ fileprivate struct FfiConverterSequenceTypeCoreCustomField: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeCoreCustomField.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCoreCustomIcon: FfiConverterRustBuffer {
+    typealias SwiftType = [CoreCustomIcon]
+
+    public static func write(_ value: [CoreCustomIcon], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCoreCustomIcon.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CoreCustomIcon] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CoreCustomIcon]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCoreCustomIcon.read(from: &buf))
         }
         return seq
     }
@@ -1823,6 +2216,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_keelocker_core_checksum_method_corevault_history() != 36464) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_keelocker_core_checksum_method_corevault_inspect_entry() != 41508) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_keelocker_core_checksum_method_corevault_key_material() != 32997) {

@@ -139,6 +139,51 @@ coverage and use host-approved execution for these native checks.
 
 A useful real-file smoke check is: open/unlock → select/search actual entries → create a draft inside a group → cancel without a file change → Save a draft and independently reopen → edit externally in KeePassXC and observe reload → edit/save again → exercise conflict recovery if changed → Lock and check that entries/details clear. Verify UI-specific scope/focus behavior only when it is relevant to the change.
 
+## Entry icon checks
+
+Rust lifecycle tests cover icon selection/import, duplicate image reuse, invalid
+selection atomicity, unknown stored IDs, retained history and shared owners.
+The ignored `keepassxc_icon_changes_and_history_roundtrip` test independently
+exports the modified vault through KeePassXC, including the embedded PNG and
+historical standard icon. Run it with the functional interoperability suite above.
+
+Swift tests cover the complete standard icon catalog, image normalization and
+invalid input, demo draft cancellation, Save/reopen of a real synthetic vault,
+history mapping, custom UUID reuse and catalog clearing on Lock. Delayed-loader
+tests exercise cancelled/replaced import sessions and obsolete failure results
+independently of native picker automation. Focused native UI tests are
+`testEntryIconPickerSearchSaveAndCancel` and `testEntryIconImportCancelSaveAndReuse`.
+Manually check the popover at normal/minimum window sizes and in both appearances;
+the image picker should show a preview after selecting a file, and Cancel should
+retain the prior icon. Imported image names/bytes must not be logged or persisted
+outside the encrypted vault.
+
+[FaviconTests.swift](../KeeLockerTests/FaviconTests.swift) injects synthetic
+responses and delayed loaders rather than contacting account websites. It covers
+origin sanitization, relative/cross-host icon discovery, HTTPS-only links,
+fallback, invalid/oversized images and multi-size ICO quality, manual draft
+invalidation, off-by-default automation,
+origin reuse, Save/open scheduling and preference/session races. URL-change
+regressions cover downloaded icons after Save/reopen, return to a cached origin,
+manual choices clearing provenance and surviving URL changes/reopen (including
+the standard key), unchanged origins, disabled downloads,
+network failure retaining the old icon and obsolete refresh results. Rust
+lifecycle regressions cover provenance/history preservation, mismatched external
+icon UUIDs and KeePassXC retaining CustomData through an unrelated save.
+`testDetailAndHistoryReadUseCatalogFromTheirOwnRevision` delays a synchronous
+read until after an external custom-icon save and refresh, then verifies both
+detail/history use the matching catalogs. Verify downloaded
+icons through the existing synthetic KDBX bridge/reopen and KeePassXC checks.
+Scale regressions exercise 4,000 custom references and 2,000 entries at a failed
+origin; adversarial HTML regressions exercise long attributes and unfinished tags
+within the response cap. These are coarse regression bounds, not portable
+performance benchmarks. Retain the external-refresh/return-to-original-Website
+scenario when changing automatic attempt/queue lifetimes.
+Manually check Download from website with a public test site, change its domain
+after Save with automation enabled and confirm the new icon, Cancel download,
+draft Save/Cancel, and the Settings toggle in both appearances. Keep real vault
+URLs and response bytes out of diagnostic logs and screenshots.
+
 ## Performance checks
 
 ```sh

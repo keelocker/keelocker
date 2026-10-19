@@ -12,6 +12,7 @@ struct RootView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sortOrder: ItemSortOrder = .recent
     @State private var listToolbarTitleWidth: CGFloat?
+    @AppStorage("automaticallyDownloadWebsiteIcons") private var automaticallyDownloadWebsiteIcons = false
 
     var body: some View {
         Group {
@@ -29,6 +30,10 @@ struct RootView: View {
         }
         .frame(minWidth: 980, minHeight: 680)
         .tint(KeeTheme.accent)
+        .onAppear { store.setAutomaticIconDownloads(automaticallyDownloadWebsiteIcons) }
+        .onChange(of: automaticallyDownloadWebsiteIcons) { _, enabled in
+            store.setAutomaticIconDownloads(enabled)
+        }
         .toolbarBackground(.hidden, for: .windowToolbar)
         .focusedSceneValue(\.createVaultItem, createVaultItemAction)
         .focusedSceneValue(\.createVaultGroup, createVaultGroupAction)
@@ -175,7 +180,8 @@ struct RootView: View {
                 hasDraft: $store.hasDraft,
                 isNew: true,
                 onSave: { item in await store.saveItem(item) },
-                onCancel: store.cancelNewItem
+                onCancel: store.cancelNewItem,
+                customIcons: store.customIcons
             )
             .id(draft.id)
             .disabled(store.isBusy)
@@ -191,7 +197,8 @@ struct RootView: View {
                 canFavorite: store.capabilities.canFavorite,
                 hasDraft: $store.hasDraft,
                 onSave: { item in await store.saveItem(item) },
-                onBeginEditing: { !store.isBusy && !store.isLocked && store.selectedEntry != nil }
+                onBeginEditing: { !store.isBusy && !store.isLocked && store.selectedEntry != nil },
+                customIcons: store.customIcons
             )
             .id(selectedID)
             .id(store.editorGeneration)

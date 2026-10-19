@@ -8,19 +8,33 @@ final class VaultStore: ObservableObject {
     @Published private(set) var newItemDraft: VaultEntry?
     @Published private(set) var isBusy = false
     @Published private(set) var isDirty = false
-    @Published var operationFailure: VaultFailure?
+    @Published var operationFailure: VaultFailure? {
+        didSet { if operationFailure == nil { scheduleAutomaticIcons() } }
+    }
     @Published var quickUnlockFailure: QuickUnlockFailure?
     @Published private(set) var touchIDAvailable = false
     @Published private(set) var canQuickUnlock = false
     private(set) var lastCommandApplied = false
-    @Published var hasDraft = false { didSet { if !hasDraft { refreshIfNeeded() } } }
-    @Published var inspectedEntryID: UUID? { didSet { if inspectedEntryID == nil { refreshIfNeeded() } } }
+    @Published var hasDraft = false {
+        didSet {
+            if hasDraft { pauseAutomaticIcons() }
+            else { refreshIfNeeded(); scheduleAutomaticIcons() }
+        }
+    }
+    @Published var inspectedEntryID: UUID? {
+        didSet {
+            if inspectedEntryID != nil { pauseAutomaticIcons() }
+            else { refreshIfNeeded(); scheduleAutomaticIcons() }
+        }
+    }
+    @Published private(set) var automaticallyDownloadsIcons = false
     @Published private(set) var editorGeneration = UUID()
     @Published private(set) var snapshotRevision = UUID()
     @Published var sidebarSelection: SidebarSelection = .allItems
     @Published var searchQuery = ""
     @Published private(set) var state: VaultState = .noVault
     @Published private(set) var groups: [VaultGroup] = []
+    @Published private(set) var customIcons: [VaultCustomIcon] = []
     @Published private(set) var collapsedGroupIDs: Set<UUID> = []
     @Published private(set) var vaultName = "KeeLocker"
     @Published private(set) var fileURL: URL?
@@ -40,19 +54,40 @@ final class VaultStore: ObservableObject {
     private var refreshPending = false
     private var lastRefreshFailure: VaultFailure?
     private var selectionBeforeNewItem: UUID?
+    private let websiteIconLoader: FaviconDownloader.Loader
+    private var automaticIconTask: Task<Void, Never>?
+    private var automaticIconGeneration = UUID()
+    private struct IconAttempt: Hashable {
+        let id: UUID
+        let website: String
+    }
+    private struct AutomaticIconCandidate {
+        let item: VaultItem
+        let origin: URL
+    }
+    private var automaticIconCandidates: [AutomaticIconCandidate] = []
+    private var automaticIconCandidateIndex = 0
+    private var automaticIconCandidatesRevision: UUID?
+    // Rejected stale/detail results only suppress retries for that snapshot.
+    private var iconAttempts: Set<IconAttempt> = []
+    private var websiteIcons: [URL: VaultCustomIcon] = [:]
+    private var failedIconOrigins: Set<URL> = []
 
-    init(preferences: UserDefaults? = nil, quickUnlock: (any QuickUnlockService)? = nil) {
+    init(preferences: UserDefaults? = nil, quickUnlock: (any QuickUnlockService)? = nil,
+         websiteIconLoader: @escaping FaviconDownloader.Loader = { try await FaviconDownloader().download($0) }) {
         self.preferences = preferences
         self.quickUnlock = quickUnlock
+        self.websiteIconLoader = websiteIconLoader
         if let path = preferences?.string(forKey: "lastVaultPath"), !path.isEmpty {
             openFile(URL(fileURLWithPath: path))
         }
     }
 
-    deinit { unlockTask?.cancel(); refreshTask?.cancel() }
+    deinit { unlockTask?.cancel(); refreshTask?.cancel(); automaticIconTask?.cancel() }
 
     init(items: [VaultItem]) {
         quickUnlock = nil
+        websiteIconLoader = { try await FaviconDownloader().download($0) }
         let memory = MemoryVaultRepository(items: items)
         repository = memory
         capabilities = memory.capabilities
@@ -222,6 +257,11 @@ final class VaultStore: ObservableObject {
         quickUnlock?.cancel(request: generation)
         quickUnlockRegistration = nil
         generation = UUID()
+        state = repository == nil ? .noVault : .locked
+        pauseAutomaticIcons()
+        iconAttempts.removeAll()
+        websiteIcons.removeAll()
+        failedIconOrigins.removeAll()
         snapshotRevision = UUID()
         fileMonitor?.invalidate()
         fileMonitor = nil
@@ -248,6 +288,7 @@ final class VaultStore: ObservableObject {
         newItemDraft = nil
         selectionBeforeNewItem = nil
         groups = []
+        customIcons = []
         collapsedGroupIDs = []
         selectedItemID = nil
         sidebarSelection = .allItems
@@ -402,12 +443,14 @@ final class VaultStore: ObservableObject {
                 self.operationFailure = result.saveFailure
                 self.isBusy = false
                 self.refreshIfNeeded()
+                self.scheduleAutomaticIcons()
             } catch {
                 guard !Task.isCancelled, let self, self.generation == request else { return }
                 self.operationFailure = (error as? VaultFailure) ?? .invalidOperation
                 if self.operationFailure == .credentialsChanged { self.forgetSessionQuickUnlock() }
                 self.isBusy = false
                 self.refreshIfNeeded()
+                self.scheduleAutomaticIcons()
             }
         }
     }
@@ -454,6 +497,7 @@ final class VaultStore: ObservableObject {
             self.refreshTask = nil
             self.isBusy = false
             self.refreshIfNeeded()
+            self.scheduleAutomaticIcons()
         }
     }
 
@@ -511,6 +555,7 @@ final class VaultStore: ObservableObject {
         snapshotRevision = UUID()
         vaultName = vault.name
         groups = vault.groups
+        customIcons = vault.customIcons
         collapsedGroupIDs.formIntersection(Set(vault.groups.map(\.id)))
         items = vault.entries
         isDirty = vault.isDirty
@@ -537,5 +582,136 @@ final class VaultStore: ObservableObject {
         }
         reconcileSelection()
         refreshIfNeeded()
+        scheduleAutomaticIcons()
+    }
+
+    func setAutomaticIconDownloads(_ enabled: Bool) {
+        guard automaticallyDownloadsIcons != enabled else { return }
+        automaticallyDownloadsIcons = enabled
+        pauseAutomaticIcons()
+        iconAttempts.removeAll()
+        websiteIcons.removeAll()
+        failedIconOrigins.removeAll()
+        scheduleAutomaticIcons()
+    }
+
+    private func pauseAutomaticIcons() {
+        automaticIconGeneration = UUID()
+        automaticIconTask?.cancel()
+        automaticIconTask = nil
+        automaticIconCandidates.removeAll()
+        automaticIconCandidateIndex = 0
+        automaticIconCandidatesRevision = nil
+    }
+
+    private var canDownloadAutomaticIcons: Bool {
+        automaticallyDownloadsIcons && !isLocked && capabilities.canEdit && !isBusy && !isDirty
+            && !hasDraft && inspectedEntryID == nil && !refreshPending && operationFailure == nil
+    }
+
+    private func scheduleAutomaticIcons() {
+        guard canDownloadAutomaticIcons, automaticIconTask == nil, let repository else { return }
+        if automaticIconCandidatesRevision != snapshotRevision {
+            automaticIconCandidatesRevision = snapshotRevision
+            iconAttempts.removeAll()
+            automaticIconCandidates = items.compactMap { item in
+                guard item.needsWebsiteIcon, let origin = FaviconDownloader.origin(for: item.website),
+                      !failedIconOrigins.contains(origin) else { return nil }
+                return AutomaticIconCandidate(item: item, origin: origin)
+            }
+            automaticIconCandidateIndex = 0
+        }
+        var next: AutomaticIconCandidate?
+        while automaticIconCandidateIndex < automaticIconCandidates.count {
+            let candidate = automaticIconCandidates[automaticIconCandidateIndex]
+            automaticIconCandidateIndex += 1
+            if !failedIconOrigins.contains(candidate.origin),
+               !iconAttempts.contains(IconAttempt(id: candidate.item.id, website: candidate.item.website)) {
+                next = candidate
+                break
+            }
+        }
+        guard let next else { return }
+        let item = next.item
+        let origin = next.origin
+        let session = generation
+        let request = automaticIconGeneration
+        let candidateRevision = snapshotRevision
+        let attempt = IconAttempt(id: item.id, website: item.website)
+        automaticIconTask = Task { [weak self] in
+            guard let self else { return }
+            var retryWhenIdle = false
+            defer {
+                if self.generation == session, self.automaticIconGeneration == request {
+                    if retryWhenIdle, self.automaticIconCandidatesRevision == candidateRevision {
+                        self.automaticIconCandidateIndex = max(0, self.automaticIconCandidateIndex - 1)
+                    }
+                    self.automaticIconTask = nil
+                    self.scheduleAutomaticIcons()
+                }
+            }
+            do {
+                if self.failedIconOrigins.contains(origin) {
+                    self.iconAttempts.insert(attempt)
+                    return
+                }
+                let icon: VaultCustomIcon
+                if let cached = self.websiteIcons[origin] { icon = cached }
+                else { icon = try await self.websiteIconLoader(origin) }
+                guard !Task.isCancelled, self.generation == session,
+                      self.automaticIconGeneration == request else { return }
+                self.websiteIcons[origin] = icon
+                guard self.canDownloadAutomaticIcons else { retryWhenIdle = true; return }
+                // Reserve the normal mutation slot while obtaining a complete current entry.
+                // List summaries are redacted and cannot be used for replacement edits.
+                self.isBusy = true
+                let revision = self.snapshotRevision
+                var current: VaultEntry
+                do { current = try await repository.entry(item.id) }
+                catch {
+                    guard self.generation == session else { return }
+                    self.isBusy = false
+                    if !Task.isCancelled, self.automaticIconGeneration == request {
+                        self.iconAttempts.insert(attempt)
+                    }
+                    self.refreshIfNeeded()
+                    self.scheduleAutomaticIcons()
+                    return
+                }
+                guard self.generation == session else { return }
+                self.isBusy = false
+                if !Task.isCancelled, self.automaticIconGeneration == request,
+                   current.website != item.website || !current.needsWebsiteIcon || current.isRedacted {
+                    self.iconAttempts.insert(attempt)
+                }
+                guard !Task.isCancelled, self.automaticIconGeneration == request,
+                      self.canDownloadAutomaticIcons, self.snapshotRevision == revision,
+                      current.website == item.website, current.needsWebsiteIcon, !current.isRedacted else {
+                    retryWhenIdle = !self.canDownloadAutomaticIcons
+                    self.refreshIfNeeded()
+                    self.scheduleAutomaticIcons()
+                    return
+                }
+                self.iconAttempts.insert(attempt)
+                current.useWebsiteIcon(icon, origin: origin)
+                current.modifiedAt = .now
+                self.run(.updateEntry(current), session: session)
+                await self.operationTask?.value
+                if self.generation == session, self.lastCommandApplied {
+                    // Eligibility now comes from the persisted origin. Retaining a
+                    // successful attempt would block switching back to this Website.
+                    self.iconAttempts.remove(attempt)
+                }
+            } catch {
+                guard !Task.isCancelled, self.generation == session,
+                      self.automaticIconGeneration == request else { return }
+                self.failedIconOrigins.insert(origin)
+                self.iconAttempts.insert(attempt)
+            }
+        }
+    }
+
+    func waitForAutomaticIcons() async {
+        while let task = automaticIconTask { await task.value }
     }
 }

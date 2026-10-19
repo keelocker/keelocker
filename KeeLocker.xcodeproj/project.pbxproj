@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        AE0000000000000000000008 /* FaviconDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000008; };
+        AE0000000000000000000009 /* FaviconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000009; };
+		AE0000000000000000000006 /* IconImageImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000006; };
+		AE0000000000000000000007 /* EntryIconPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000007; };
 		AE0000000000000000000005 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000005; };
 		AE0000000000000000000001 /* ClipboardOwner.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000001; };
 		AE0000000000000000000002 /* ClipboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0000000000000000000002; };
@@ -56,6 +60,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+        BE0000000000000000000008 /* FaviconDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/macOS/FaviconDownloader.swift; sourceTree = SOURCE_ROOT; };
+        BE0000000000000000000009 /* FaviconTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerTests/FaviconTests.swift; sourceTree = SOURCE_ROOT; };
+		BE0000000000000000000006 /* IconImageImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/macOS/IconImageImport.swift; sourceTree = SOURCE_ROOT; };
+		BE0000000000000000000007 /* EntryIconPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Views/EntryIconPicker.swift; sourceTree = SOURCE_ROOT; };
 		BE0000000000000000000005 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		BE0000000000000000000001 /* ClipboardOwner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/macOS/ClipboardOwner.swift; sourceTree = SOURCE_ROOT; };
 		BE0000000000000000000002 /* ClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerTests/ClipboardTests.swift; sourceTree = SOURCE_ROOT; };
@@ -141,6 +149,9 @@
 				BD0000000000000000000000,
 				BD0000000000000000000001,
 				BE0000000000000000000001 /* ClipboardOwner.swift */,
+				BE0000000000000000000006 /* IconImageImport.swift */,
+                BE0000000000000000000008 /* FaviconDownloader.swift */,
+				BE0000000000000000000007 /* EntryIconPicker.swift */,
 				BB0000000000000000000000,
 				BB0000000000000000000001,
 				BB0000000000000000000002,
@@ -208,6 +219,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000000000000000000001 /* VaultStoreTests.swift */,
+                BE0000000000000000000009 /* FaviconTests.swift */,
 				BD0000000000000000000002,
 				BE0000000000000000000002 /* ClipboardTests.swift */,
 			);
@@ -368,6 +380,9 @@
 				AD0000000000000000000000,
 				AD0000000000000000000001,
 				AE0000000000000000000001 /* ClipboardOwner.swift in Sources */,
+				AE0000000000000000000006 /* IconImageImport.swift in Sources */,
+                AE0000000000000000000008 /* FaviconDownloader.swift in Sources */,
+				AE0000000000000000000007 /* EntryIconPicker.swift in Sources */,
 				AA0000000000000000000000,
 				AA0000000000000000000001,
 				AA0000000000000000000002,
@@ -393,6 +408,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A20000000000000000000001 /* VaultStoreTests.swift in Sources */,
+                AE0000000000000000000009 /* FaviconTests.swift in Sources */,
 				AD0000000000000000000002,
 				AE0000000000000000000002 /* ClipboardTests.swift in Sources */,
 			);

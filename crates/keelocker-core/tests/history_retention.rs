@@ -24,6 +24,7 @@ fn write(db: &Database, path: &Path) {
 fn edit(title: &str) -> CoreEntryEdit {
     CoreEntryEdit {
         title: title.into(),
+        icon: None,
         username: String::new(),
         password: "synthetic".into(),
         url: String::new(),

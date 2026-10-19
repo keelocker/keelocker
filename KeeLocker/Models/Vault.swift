@@ -9,6 +9,7 @@ struct Vault: Sendable {
     var entries: [VaultEntry]
     var isDirty = false
     var fileURL: URL? = nil
+    var customIcons: [VaultCustomIcon] = []
 }
 
 struct VaultCommandResult: Sendable {

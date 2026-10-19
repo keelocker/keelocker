@@ -4,6 +4,7 @@ struct SettingsView: View {
     @AppStorage("appearance") private var appearanceRawValue = AppearanceChoice.system.rawValue
     @AppStorage("concealUsernames") private var concealUsernames = false
     @AppStorage("clearClipboard") private var clearClipboard = true
+    @AppStorage("automaticallyDownloadWebsiteIcons") private var automaticallyDownloadWebsiteIcons = false
 
     private var appearance: Binding<AppearanceChoice> {
         Binding(
@@ -33,6 +34,15 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Automatically download website icons", isOn: $automaticallyDownloadWebsiteIcons)
+                    .accessibilityIdentifier("settings.automaticWebsiteIcons")
+            } header: {
+                Text("Website icons")
+            } footer: {
+                Text("Fill missing icons and refresh downloaded icons when a website changes. Contacts websites over HTTPS and saves icons in the vault. Chosen icons are kept.")
+            }
+
+            Section {
                 LabeledContent("Storage", value: "Encrypted KDBX files")
                 LabeledContent("Version", value: appVersion)
             } header: {
@@ -43,6 +53,6 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(8)
-        .frame(width: 470, height: 350)
+        .frame(width: 470, height: 480)
     }
 }

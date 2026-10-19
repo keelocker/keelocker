@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ItemDetailView: View {
     @Binding var item: VaultItem
@@ -10,17 +11,28 @@ struct ItemDetailView: View {
     let onSave: ((VaultItem) async -> Bool)?
     let onBeginEditing: (() -> Bool)?
     let onCancel: (() -> Void)?
+    let customIcons: [VaultCustomIcon]
     @State private var draft: ItemEditingDraft
     @State private var isEditing = false
     @State private var showsPassword = false
     @State private var copiedValue: CopiedValue?
     @State private var copyFeedbackToken = UUID()
+    @State private var showsIconPicker = false
+    @State private var importsIcon = false
+    @State private var iconImportFailure = false
+    @State private var iconImports = IconImportSession()
+    @State private var iconImportToken: UUID?
+    @State private var importTask: Task<Void, Never>?
+    @State private var isImportingIcon = false
+    @State private var isDownloadingIcon = false
+    @State private var iconDownloadFailure = false
     @FocusState private var titleHasFocus: Bool
 
     init(item: Binding<VaultItem>, canEdit: Bool = true, canFavorite: Bool = true,
          hasDraft: Binding<Bool> = .constant(false), isNew: Bool = false,
          onSave: ((VaultItem) async -> Bool)? = nil,
-         onBeginEditing: (() -> Bool)? = nil, onCancel: (() -> Void)? = nil) {
+         onBeginEditing: (() -> Bool)? = nil, onCancel: (() -> Void)? = nil,
+         customIcons: [VaultCustomIcon] = []) {
         _item = item
         self.canEdit = canEdit
         self.canFavorite = canFavorite
@@ -29,6 +41,7 @@ struct ItemDetailView: View {
         self.onSave = onSave
         self.onBeginEditing = onBeginEditing
         self.onCancel = onCancel
+        self.customIcons = customIcons
         _draft = State(initialValue: ItemEditingDraft(isNew ? item.wrappedValue : .empty))
         _isEditing = State(initialValue: isNew)
     }
@@ -56,14 +69,76 @@ struct ItemDetailView: View {
         .background(KeeTheme.canvas)
         .onAppear { if isNew { titleHasFocus = true } }
         .onDisappear {
+            invalidateIconImport()
             draft = ItemEditingDraft()
             showsPassword = false
+        }
+        .fileImporter(isPresented: $importsIcon, allowedContentTypes: [.image]) { [token = iconImportToken] result in
+            guard let token, iconImports.isCurrent(token),
+                  isEditing, canEdit, case .success(let url) = result else { return }
+            iconImportToken = nil
+            isImportingIcon = true
+            importTask = Task {
+                defer { if iconImports.isCurrent(token) { isImportingIcon = false; importTask = nil } }
+                do {
+                    guard let icon = try await iconImports.load(url, request: token),
+                          isEditing, canEdit else { return }
+                    draft.item.chooseIcon(.imported(icon))
+                } catch {
+                    guard !Task.isCancelled, iconImports.isCurrent(token), isEditing else { return }
+                    iconImportFailure = true
+                }
+            }
+        }
+        .alert("Couldn’t import icon", isPresented: $iconImportFailure) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Choose a supported image up to 20 MB. KeeLocker will resize it to fit the icon.")
+        }
+        .alert("Couldn’t download icon", isPresented: $iconDownloadFailure) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("No supported icon was found. Check the website and your connection, or import an image.")
+        }
+        .onChange(of: draft.item.website) { _, _ in
+            if isDownloadingIcon { invalidateIconImport() }
         }
     }
 
     private var detailHeader: some View {
         HStack(alignment: .top, spacing: 18) {
-            EntryIcon(item: presentedItem, size: 64)
+            if isEditing {
+                Button { showsIconPicker = true } label: {
+                    EntryIcon(item: presentedItem, size: 64)
+                        .overlay(alignment: .bottomTrailing) {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.white, KeeTheme.accent)
+                                .offset(x: 3, y: 3)
+                        }
+                }
+                .buttonStyle(PressableButtonStyle())
+                .disabled(!canEdit)
+                .help("Change icon")
+                .accessibilityLabel("Change icon")
+                .accessibilityValue(draft.item.icon?.name ?? "Demo icon")
+                .accessibilityIdentifier("entry.changeIcon")
+                .popover(isPresented: $showsIconPicker, arrowEdge: .leading) {
+                    EntryIconPicker(selected: draft.item.icon, customIcons: customIcons, onSelect: { icon in
+                        invalidateIconImport()
+                        draft.item.chooseIcon(icon)
+                        showsIconPicker = false
+                    }, onImport: {
+                        invalidateIconImport()
+                        showsIconPicker = false
+                        iconImportToken = iconImports.begin()
+                        importsIcon = true
+                    }, canDownload: FaviconDownloader.origin(for: draft.item.website) != nil,
+                       isDownloading: isDownloadingIcon, onDownload: downloadWebsiteIcon)
+                }
+            } else {
+                EntryIcon(item: presentedItem, size: 64)
+            }
 
             VStack(alignment: .leading, spacing: 5) {
                 if isEditing {
@@ -139,6 +214,8 @@ struct ItemDetailView: View {
 
             if isEditing {
                 DetailActionButton(title: "Cancel", iconName: "xmark") {
+                    invalidateIconImport()
+                    showsIconPicker = false
                     draft = ItemEditingDraft()
                     isEditing = false
                     if let onCancel { onCancel() }
@@ -151,6 +228,8 @@ struct ItemDetailView: View {
                 iconName: isEditing ? "checkmark" : "pencil"
             ) {
                 if isEditing {
+                    invalidateIconImport()
+                    showsIconPicker = false
                     draft.item.modifiedAt = .now
                     let savedItem = draft.savedItem
                     if let onSave {
@@ -174,7 +253,7 @@ struct ItemDetailView: View {
                     hasDraft = true
                 }
             }
-            .disabled(!canEdit)
+            .disabled(!canEdit || isImportingIcon || isDownloadingIcon)
         }
     }
 
@@ -348,6 +427,39 @@ struct ItemDetailView: View {
     private func openWebsite() {
         guard let url = presentedItem.websiteURL else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func invalidateIconImport() {
+        iconImports.invalidate()
+        importTask?.cancel()
+        importTask = nil
+        iconImportToken = nil
+        importsIcon = false
+        isImportingIcon = false
+        isDownloadingIcon = false
+        iconDownloadFailure = false
+        iconImportFailure = false
+    }
+
+    private func downloadWebsiteIcon() {
+        if isDownloadingIcon { invalidateIconImport(); return }
+        guard isEditing, canEdit, let url = FaviconDownloader.origin(for: draft.item.website) else { return }
+        invalidateIconImport()
+        let token = iconImports.begin()
+        let website = draft.item.website
+        isDownloadingIcon = true
+        importTask = Task {
+            defer { if iconImports.isCurrent(token) { isDownloadingIcon = false; importTask = nil } }
+            do {
+                guard let icon = try await iconImports.loadWebsite(url, request: token),
+                      isEditing, canEdit, draft.item.website == website else { return }
+                draft.item.useWebsiteIcon(icon, origin: url)
+                showsIconPicker = false
+            } catch {
+                guard !Task.isCancelled, iconImports.isCurrent(token), isEditing else { return }
+                iconDownloadFailure = true
+            }
+        }
     }
 }
 
