@@ -26,6 +26,7 @@ The detail title and its editing field share the same 30 pt semibold font, nativ
 - Item rows: 72 pt minimum height, 10 pt radius, no separator cage, selected and hover states use surface fills.
 - Buttons: native label and icon construction, 9 pt radius for custom action buttons, 0.96 press scale in 120 ms unless Reduce Motion is enabled.
 - Detail action bar: native SwiftUI bordered buttons at the large system control size, with a bordered prominent Copy action. macOS supplies typography, shape, padding and interaction states. Copy/Copied and Show/Hide reserve the larger label and symbol dimensions so feedback does not move the action row or the content below it.
+- Detail field actions use small native bordered icon buttons; the favorite button uses the regular system control size and an orange filled star when selected. Both reserve a 16 pt symbol slot to keep changing icons from moving adjacent content; button padding and interaction states remain native.
 - Toolbar: standard SwiftUI toolbar items for sort and add, with system sizing, hover and pressed states. Search uses `.searchable` in the toolbar with system focus and clearing behavior.
 - Credential groups: one grouped surface per semantic section, 14 pt radius, hairline separator only between rows.
 

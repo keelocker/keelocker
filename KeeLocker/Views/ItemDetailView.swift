@@ -175,12 +175,11 @@ struct ItemDetailView: View {
                 }
             } label: {
                 Image(systemName: presentedItem.isFavorite ? "star.fill" : "star")
-                    .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(presentedItem.isFavorite ? Color.orange : Color.secondary)
-                    .frame(width: 34, height: 34)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .frame(width: 16, height: 16)
             }
-            .buttonStyle(PressableButtonStyle())
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
             .help(presentedItem.isFavorite ? "Remove from favorites" : "Add to favorites")
             .disabled(!canEdit || !canFavorite)
             .accessibilityLabel(presentedItem.isFavorite ? "Remove from favorites" : "Add to favorites")
@@ -598,11 +597,10 @@ private struct MiniActionButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: iconName)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 30, height: 30)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .frame(width: 16, height: 16)
         }
-        .buttonStyle(PressableButtonStyle())
+        .buttonStyle(.bordered)
+        .controlSize(.small)
         .help(help)
         .accessibilityLabel(help)
     }
