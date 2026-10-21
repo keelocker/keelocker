@@ -148,11 +148,16 @@ coverage and use host-approved execution for these native checks.
 
 A useful real-file smoke check is: open/unlock → select/search actual entries → create a draft inside a group → cancel without a file change → Save a draft and independently reopen → edit externally in KeePassXC and observe reload → edit/save again → exercise conflict recovery if changed → Lock and check that entries/details clear. Verify UI-specific scope/focus behavior only when it is relevant to the change.
 
-`testRecoveryCopyAndRecycleBinNativeFlow` uses a temporary synthetic fixture:
-delete into Recycle Bin, Restore to the previous group, verify with KeePassXC,
-then restore the pinned original to a new file through Recovery Copies.
-Inspect the recovery sheet at normal and minimum window sizes in both system
-appearances. Confirm keyboard dismissal, password/key-file selection and visible
+`testRecoveryCopyAndRecycleBinNativeFlow` and its `Dark` variant use temporary
+synthetic fixtures: delete into Recycle Bin, cancel permanent deletion without a
+file change, Restore to the previous group, verify with KeePassXC, then restore
+the pinned original to a new file through Recovery Copies. They capture normal
+and restored-copy screenshots in both appearances. Scope context-menu actions
+to the app window and confirmation buttons to the alert so menu-bar/Touch Bar
+duplicates do not make XCTest queries ambiguous.
+Manually inspect the recovery sheet at minimum window size; a successful drag
+gesture alone does not prove the window resized. Confirm keyboard dismissal,
+password/key-file selection and visible
 error/committed-copy status. Native picker/XCTest initialization failures are
 coverage gaps; report them separately from successful unit and bridge tests.
 

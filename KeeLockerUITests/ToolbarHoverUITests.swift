@@ -5,6 +5,14 @@ import Carbon
 @MainActor
 final class ToolbarHoverUITests: XCTestCase {
     func testRecoveryCopyAndRecycleBinNativeFlow() throws {
+        try recoveryCopyAndRecycleBinNativeFlow(appearance: "light")
+    }
+
+    func testRecoveryCopyAndRecycleBinNativeFlowDark() throws {
+        try recoveryCopyAndRecycleBinNativeFlow(appearance: "dark")
+    }
+
+    private func recoveryCopyAndRecycleBinNativeFlow(appearance: String) throws {
         let previousInput = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         let asciiInput = TISCopyCurrentASCIICapableKeyboardLayoutInputSource().takeRetainedValue()
         XCTAssertEqual(TISSelectInputSource(asciiInput), noErr)
@@ -19,7 +27,8 @@ final class ToolbarHoverUITests: XCTestCase {
         try FileManager.default.copyItem(at: fixture, to: source)
         let originalBytes = try Data(contentsOf: source)
         let app = XCUIApplication()
-        app.launchArguments = ["--ignore-last-vault", "--disable-touch-id", "-automaticallyDownloadWebsiteIcons", "NO"]
+        app.launchArguments = ["--ignore-last-vault", "--disable-touch-id", "-automaticallyDownloadWebsiteIcons", "NO",
+                               "-appearance", appearance]
         app.launch()
         app.activate()
         defer { app.terminate() }
@@ -44,18 +53,24 @@ final class ToolbarHoverUITests: XCTestCase {
         let entry = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "GitHub тест 🔐,")).firstMatch
         XCTAssertTrue(entry.waitForExistence(timeout: 3))
         entry.rightClick()
-        app.menuItems["Delete"].click()
-        let trash = app.buttons["Move to Recycle Bin"]
+        app.windows.menuItems["Delete"].click()
+        let trash = app.dialogs.buttons["Move to Recycle Bin"]
         XCTAssertTrue(trash.waitForExistence(timeout: 3))
         trash.click()
         let bin = app.descendants(matching: .any).matching(identifier: "sidebar.recycleBin").firstMatch
         XCTAssertTrue(bin.waitForExistence(timeout: 10))
         bin.click()
         XCTAssertTrue(entry.waitForExistence(timeout: 3))
+        let beforeCancelledDeletion = try Data(contentsOf: source)
+        entry.rightClick()
+        app.windows.menuItems["Delete Permanently…"].click()
+        XCTAssertTrue(app.dialogs.buttons["Delete Permanently"].waitForExistence(timeout: 3))
+        app.dialogs.buttons["Cancel"].click()
+        XCTAssertEqual(try Data(contentsOf: source), beforeCancelledDeletion)
         entry.rightClick()
         XCTAssertTrue(app.menuItems["Restore"].waitForExistence(timeout: 3))
         app.menuItems["Restore"].click()
-        app.buttons["All items"].click()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "All items,")).firstMatch.click()
         XCTAssertTrue(entry.waitForExistence(timeout: 10))
         let restored = try runKeePassXC(["show", "-q", source.path, "Work/Shared/GitHub тест 🔐"])
         XCTAssertTrue(restored.contains("developer@example.test"))
@@ -70,7 +85,7 @@ final class ToolbarHoverUITests: XCTestCase {
         recoveryPassword.click()
         recoveryPassword.typeText("fixture-password")
         let normal = XCTAttachment(screenshot: app.screenshot())
-        normal.name = "recovery-copies-normal"
+        normal.name = "recovery-copies-\(appearance)-normal"
         normal.lifetime = .keepAlways
         add(normal)
         app.buttons["recovery.restore"].click()
@@ -80,7 +95,7 @@ final class ToolbarHoverUITests: XCTestCase {
         app.typeKey("a", modifierFlags: .command)
         path.typeText(destination.path)
         app.typeKey(.return, modifierFlags: [])
-        let save = app.buttons["Restore Copy"]
+        let save = app.buttons["OKButton"]
         XCTAssertTrue(save.waitForExistence(timeout: 3))
         save.click()
         let copied = expectation(for: NSPredicate { _, _ in
@@ -89,14 +104,11 @@ final class ToolbarHoverUITests: XCTestCase {
         wait(for: [copied], timeout: 15)
         XCTAssertEqual(try Data(contentsOf: destination), originalBytes)
         XCTAssertNotEqual(try Data(contentsOf: source), originalBytes)
-        let window = app.windows.firstMatch
-        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
-        corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: -200, dy: -80)))
         XCTAssertTrue(app.buttons["recovery.done"].isHittable)
-        let minimum = XCTAttachment(screenshot: app.screenshot())
-        minimum.name = "recovery-copies-small-window"
-        minimum.lifetime = .keepAlways
-        add(minimum)
+        let restoredCopy = XCTAttachment(screenshot: app.screenshot())
+        restoredCopy.name = "recovery-copies-\(appearance)-restored"
+        restoredCopy.lifetime = .keepAlways
+        add(restoredCopy)
         app.buttons["recovery.done"].click()
     }
 
