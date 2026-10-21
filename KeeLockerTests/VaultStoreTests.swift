@@ -4,6 +4,146 @@ import AppKit
 
 @MainActor
 final class VaultStoreTests: XCTestCase {
+    func testRecycleBinScopesRestoreAndDirectMutationGuards() async throws {
+        let root = VaultGroup(id: UUID(), name: "Root", path: "Root")
+        let source = VaultGroup(id: UUID(), name: "Source", parentID: root.id, path: "Root / Source")
+        var entry = MockVault.items[0]
+        entry.group = source
+        entry.isFavorite = true
+        let repository = MemoryVaultRepository(vault: Vault(name: "Synthetic", groups: [root, source], entries: [entry]))
+        let store = VaultStore()
+        store.use(repository)
+        store.unlock()
+        await store.waitForUnlock()
+        store.run(.deleteEntry(entry.id))
+        await store.waitForOperation()
+        let bin = try XCTUnwrap(store.recycleBinID)
+        XCTAssertEqual(store.items.count, 1, "Trash preserves the global entry inventory")
+        XCTAssertTrue(store.isInRecycleBin(id: entry.id))
+        XCTAssertEqual(store.activeItemCount, 0)
+        XCTAssertEqual(store.favoriteCount, 0)
+        XCTAssertTrue(store.visibleItems.isEmpty)
+        XCTAssertFalse(store.ordinaryGroups.contains { $0.id == bin })
+        XCTAssertFalse(store.visibleGroupRows.contains { $0.id == bin })
+        store.navigate(to: .favorites)
+        XCTAssertTrue(store.visibleItems.isEmpty)
+        store.searchQuery = entry.title
+        XCTAssertTrue(store.visibleItems.isEmpty)
+        store.navigate(to: .recycleBin)
+        XCTAssertEqual(store.visibleItems.map(\.id), [entry.id])
+        XCTAssertFalse(store.canCreateInCurrentScope)
+        XCTAssertFalse(store.canEditEntry(id: entry.id))
+        store.addItem()
+        XCTAssertNil(store.newItemDraft)
+        for command: VaultCommand in [.deleteEntry(entry.id), .updateEntry(entry), .moveEntry(entry.id, source.id),
+                                      .createGroup(parent: bin, name: "Rejected"), .moveGroup(bin, source.id),
+                                      .putAttachment(entry.id, "synthetic.bin", Data([1]))] {
+            store.run(command)
+            await store.waitForOperation()
+            XCTAssertEqual(store.operationFailure, .invalidOperation)
+        }
+        let history = try await repository.history(entry.id)
+        XCTAssertTrue(history.isEmpty, "A recoverable move must preserve the existing history without adding checkpoints")
+        store.run(.restoreEntry(entry.id))
+        await store.waitForOperation()
+        XCTAssertFalse(store.isInRecycleBin(id: entry.id))
+        XCTAssertEqual(store.items.first?.group.id, source.id)
+        XCTAssertEqual(store.favoriteCount, 1)
+        store.navigate(to: .allItems)
+        XCTAssertEqual(store.visibleItems.map(\.id), [entry.id])
+        XCTAssertTrue(store.canCreateInCurrentScope)
+        store.run(.deleteEntry(entry.id))
+        await store.waitForOperation()
+        store.run(.deleteEntryPermanently(entry.id))
+        await store.waitForOperation()
+        XCTAssertTrue(store.items.isEmpty)
+        store.lock()
+        XCTAssertNil(store.recycleBinID)
+        XCTAssertEqual(store.recycleBinCount, 0)
+    }
+
+    func testNestedTrashMembershipIgnoresInvalidRootReferenceAndAutomaticIcons() async throws {
+        let root = VaultGroup(id: UUID(), name: "Root", path: "Root")
+        let bin = VaultGroup(id: UUID(), name: "Bin", parentID: root.id, path: "Root / Bin")
+        let nested = VaultGroup(id: UUID(), name: "Nested", parentID: bin.id, path: "Root / Bin / Nested")
+        var entry = MockVault.items[0]
+        entry.group = nested
+        entry.icon = .builtIn(0)
+        entry.isFavorite = true
+        entry.website = "https://synthetic.invalid"
+        for reference in [root.id, UUID(), bin.id] {
+            let repository = MemoryVaultRepository(vault: Vault(name: "Synthetic", groups: [root, bin, nested], entries: [entry], recycleBinID: reference))
+            let store = VaultStore(websiteIconLoader: { _ in
+                XCTFail("Entries in the recycle subtree must not trigger icon downloads")
+                throw VaultFailure.invalidOperation
+            })
+            store.use(repository)
+            store.unlock()
+            await store.waitForUnlock()
+            XCTAssertEqual(store.isInRecycleBin(id: entry.id), reference == bin.id)
+            if reference == bin.id {
+                XCTAssertEqual(store.ordinaryGroups.map(\.id), [root.id])
+                store.navigate(to: .recycleBin)
+                XCTAssertEqual(store.visibleItems.map(\.id), [entry.id])
+                store.setAutomaticIconDownloads(true)
+                await store.waitForAutomaticIcons()
+                store.setAutomaticIconDownloads(false)
+                store.run(.restoreEntry(entry.id))
+                await store.waitForOperation()
+                XCTAssertEqual(store.items.first?.group.id, root.id)
+            } else {
+                XCTAssertEqual(store.activeItemCount, 1)
+            }
+            store.lock()
+        }
+    }
+
+    func testDisabledRecycleBinDeletesPermanentlyInMemoryRepository() async throws {
+        let root = VaultGroup(id: UUID(), name: "Synthetic", path: "Synthetic")
+        var entry = MockVault.items[0]
+        entry.group = root
+        let repository = MemoryVaultRepository(vault: Vault(name: "Synthetic", groups: [root], entries: [entry], recycleBinEnabled: false))
+        let store = VaultStore()
+        store.use(repository)
+        store.unlock()
+        await store.waitForUnlock()
+        XCTAssertFalse(store.recycleBinEnabled)
+        store.run(.deleteEntry(entry.id))
+        await store.waitForOperation()
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertNil(store.recycleBinID)
+    }
+
+    func testTrashAutosaveConflictRetainsMutationAndSavesCopy() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("synthetic.kdbx")
+        let copy = directory.appendingPathComponent("recovered.kdbx")
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/interop.kdbx")
+        try FileManager.default.copyItem(at: fixture, to: source)
+        let repository = RustVaultRepository(url: source)
+        let initial = try await repository.load(password: "fixture-password", keyFile: nil)
+        defer { repository.lock() }
+        let id = try XCTUnwrap(initial.entries.first?.id)
+        let original = try Data(contentsOf: source)
+        var changed = original
+        changed.append(0)
+        try changed.write(to: source)
+        let deleted = try await repository.execute(.deleteEntry(id))
+        XCTAssertEqual(deleted.saveFailure, .conflict)
+        XCTAssertTrue(deleted.vault.isDirty)
+        let retained = try XCTUnwrap(deleted.vault.entries.first { $0.id == id })
+        XCTAssertEqual(retained.group.id, deleted.vault.recycleBinID)
+        XCTAssertEqual(try Data(contentsOf: source), changed)
+        let saved = try await repository.execute(.saveAs(copy))
+        XCTAssertNil(saved.saveFailure)
+        let reopened = RustVaultRepository(url: copy)
+        defer { reopened.lock() }
+        let current = try await reopened.load(password: "fixture-password", keyFile: nil)
+        XCTAssertEqual(current.entries.first { $0.id == id }?.group.id, current.recycleBinID)
+    }
+
     func testLargeCustomIconCatalogMapsWithoutQuadraticLookup() async throws {
         let groupID = UUID().uuidString
         let icons = (0..<4_000).map { CoreCustomIcon(id: UUID().uuidString, name: "Synthetic \($0)", data: Data([1])) }
@@ -14,7 +154,7 @@ final class VaultStoreTests: XCTestCase {
                       websiteIconOrigin: nil, hasExplicitIcon: false)
         }
         let group = CoreGroup(id: groupID, parentId: nil, name: "Synthetic", path: "Synthetic", createdAt: nil, modifiedAt: nil)
-        let source = CoreSnapshot(info: CoreVaultInfo(name: "Synthetic scale", path: "/tmp/synthetic-scale.kdbx", dirty: false, rootId: groupID),
+        let source = CoreSnapshot(info: CoreVaultInfo(name: "Synthetic scale", path: "/tmp/synthetic-scale.kdbx", dirty: false, rootId: groupID, recycleBinId: nil, recycleBinEnabled: true),
                                   groups: [group], entries: entries, customIcons: icons)
         let repository = RustVaultRepository(url: URL(fileURLWithPath: source.info.path), opening: SnapshotVaultOpening(source: source))
         defer { repository.lock() }
@@ -637,6 +777,77 @@ final class VaultItemValidationTests: XCTestCase {
 
 @MainActor
 final class KdbxIntegrationTests: XCTestCase {
+    func testConfiguredBackupsSurvivePasswordAndCachedKeySavesWithoutCleanSaveChurn() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let copy = directory.appendingPathComponent("synthetic.kdbx")
+        let backups = directory.appendingPathComponent("private-backups")
+        try FileManager.default.copyItem(at: fixture(), to: copy)
+        let original = try Data(contentsOf: copy)
+        let repository = RustVaultRepository(url: copy, backupDirectory: backups)
+        let initial = try await repository.load(password: "fixture-password", keyFile: nil)
+        let material = try await repository.keyMaterial()
+        let id = try XCTUnwrap(initial.entries.first?.id)
+        let deleted = try await repository.execute(.deleteEntry(id))
+        XCTAssertNil(deleted.saveFailure)
+        XCTAssertFalse(deleted.vault.isDirty)
+        let written = try Data(contentsOf: copy)
+        let previous = try Data(contentsOf: URL(fileURLWithPath: copy.path + ".bak"))
+        _ = try await repository.execute(.save)
+        XCTAssertEqual(try Data(contentsOf: copy), written)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: copy.path + ".bak")), previous)
+        repository.lock()
+
+        let reopened = RustVaultRepository(url: copy, backupDirectory: backups)
+        defer { reopened.lock() }
+        let current = try await reopened.load(keyMaterial: material)
+        let remainingID = try XCTUnwrap(current.entries.first { !current.recycledGroupIDs.contains($0.group.id) }?.id)
+        var entry = try await reopened.entry(remainingID)
+        entry.notes += "\nSynthetic cached-key save"
+        let saved = try await reopened.execute(.updateEntry(entry))
+        XCTAssertNil(saved.saveFailure)
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: backups, includingPropertiesForKeys: nil))
+        let pinned = enumerator.compactMap { $0 as? URL }.filter { $0.lastPathComponent == "original.kdbx" }
+        XCTAssertEqual(pinned.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(pinned.first)), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(".keelocker-backups").path))
+    }
+
+    func testUnavailableBackupDirectoryRetainsStoreEditsAndAllowsSaveCopy() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let copy = directory.appendingPathComponent("synthetic.kdbx")
+        let backups = directory.appendingPathComponent("blocked-backups")
+        let rescue = directory.appendingPathComponent("rescued.kdbx")
+        try FileManager.default.copyItem(at: fixture(), to: copy)
+        let original = try Data(contentsOf: copy)
+        let store = VaultStore(backupDirectory: backups)
+        store.openFile(copy)
+        store.unlock(password: "fixture-password")
+        await store.waitForUnlock()
+        defer { store.lock() }
+        try Data("Synthetic file blocks the backup directory".utf8).write(to: backups)
+        var entry = try XCTUnwrap(store.selectedEntry)
+        entry.notes = "Synthetic unsaved edit survives backup failure"
+        store.updateItem(entry)
+        await store.waitForOperation()
+        XCTAssertEqual(store.operationFailure, .writeFailed)
+        XCTAssertTrue(store.isDirty)
+        XCTAssertEqual(store.selectedEntry?.notes, entry.notes)
+        XCTAssertEqual(try Data(contentsOf: copy), original)
+        store.run(.saveAs(rescue))
+        await store.waitForOperation()
+        XCTAssertNil(store.operationFailure)
+        XCTAssertFalse(store.isDirty)
+        let recovered = RustVaultRepository(url: rescue)
+        _ = try await recovered.load(password: "fixture-password", keyFile: nil)
+        defer { recovered.lock() }
+        let recoveredEntry = try await recovered.entry(entry.id)
+        XCTAssertEqual(recoveredEntry.notes, entry.notes)
+    }
+
     func testRedactedSummariesCannotOverwriteSecrets() async throws {
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".kdbx")
         try FileManager.default.copyItem(at: fixture(), to: copy)
@@ -872,6 +1083,7 @@ final class KdbxIntegrationTests: XCTestCase {
         let root = try XCTUnwrap(vault.groups.first { $0.parentID == nil })
         _ = try await other.execute(.renameGroup(root.id, "External root"))
         _ = try await other.execute(.deleteEntry(deleted))
+        _ = try await other.execute(.deleteEntryPermanently(deleted))
         let deadline = Date().addingTimeInterval(3)
         while (store.items.contains { $0.id == deleted } || store.selectedEntry == nil) && Date() < deadline {
             try await Task.sleep(for: .milliseconds(25))
@@ -1055,6 +1267,11 @@ final class KdbxIntegrationTests: XCTestCase {
         store.lock()
         store.unlock(password: "fixture-password")
         await store.waitForUnlock()
+        XCTAssertFalse(store.activeItems.contains { $0.id == entry.id })
+        XCTAssertTrue(store.isInRecycleBin(id: entry.id))
+        store.run(.deleteEntryPermanently(entry.id))
+        await store.waitForOperation()
+        XCTAssertNil(store.operationFailure)
         XCTAssertFalse(store.items.contains { $0.id == entry.id })
         store.lock()
     }
@@ -1384,7 +1601,7 @@ private final class DirectorySyncWarningVault: CoreVault, @unchecked Sendable {
     override func snapshot() throws -> CoreSnapshot {
         mutex.lock()
         defer { mutex.unlock() }
-        return CoreSnapshot(info: CoreVaultInfo(name: name, path: path, dirty: dirty, rootId: UUID().uuidString),
+        return CoreSnapshot(info: CoreVaultInfo(name: name, path: path, dirty: dirty, rootId: UUID().uuidString, recycleBinId: nil, recycleBinEnabled: true),
                             groups: [], entries: [], customIcons: [])
     }
     override func save() throws {
@@ -1425,6 +1642,8 @@ final class VaultLoadAdmissionTests: XCTestCase {
     func testAlreadyCancelledLoadCannotSupersedeTheAdaptersActiveOpen() async throws {
         let admission = VaultLoadAdmission()
         let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx")
+        try Data("synthetic admission identity".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
         let gate = SynchronousLoadGate()
         defer { gate.release() }
         let repository = RustVaultRepository(url: url, loadAdmission: admission,
@@ -1444,6 +1663,8 @@ final class VaultLoadAdmissionTests: XCTestCase {
     func testCancelledOpenHoldsAdmissionThroughLateSessionLockAndOtherVaultCanOpen() async throws {
         let admission = VaultLoadAdmission()
         let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx")
+        try Data("synthetic admission identity".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
         let openGate = SynchronousLoadGate()
         let lockGate = SynchronousLoadGate()
         defer { openGate.release(); lockGate.release() }
@@ -1462,6 +1683,8 @@ final class VaultLoadAdmissionTests: XCTestCase {
         XCTAssertFalse(latestOpening.openGate.entered, "Cancelling a running synchronous call must not release its slot")
 
         let otherURL = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx")
+        try Data("another synthetic admission identity".utf8).write(to: otherURL)
+        defer { try? FileManager.default.removeItem(at: otherURL) }
         let otherOpening = SyntheticVaultOpening(path: otherURL.path)
         let otherRepository = RustVaultRepository(url: otherURL, loadAdmission: admission, opening: otherOpening)
         _ = try await otherRepository.load(password: "synthetic", keyFile: nil)
@@ -1520,6 +1743,8 @@ final class VaultLoadAdmissionTests: XCTestCase {
         for cancelTask in [false, true] {
             let admission = VaultLoadAdmission()
             let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString).kdbx")
+            try Data("synthetic admission identity".utf8).write(to: url)
+            defer { try? FileManager.default.removeItem(at: url) }
             let gate = SynchronousLoadGate()
             defer { gate.release() }
             let activeRepository = RustVaultRepository(url: url, loadAdmission: admission,
@@ -1655,7 +1880,7 @@ private final class SyntheticOpenedVault: CoreVault, @unchecked Sendable {
     }
     required init(unsafeFromHandle handle: UInt64) { fatalError("Synthetic sessions have no native handle") }
     override func snapshot() throws -> CoreSnapshot {
-        CoreSnapshot(info: CoreVaultInfo(name: "Synthetic admitted vault", path: path, dirty: false, rootId: UUID().uuidString),
+        CoreSnapshot(info: CoreVaultInfo(name: "Synthetic admitted vault", path: path, dirty: false, rootId: UUID().uuidString, recycleBinId: nil, recycleBinEnabled: true),
                      groups: [], entries: [], customIcons: [])
     }
     override func lock() { lockGate.wait() }

@@ -585,9 +585,168 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 
+public protocol CoreRecoveryProtocol: AnyObject, Sendable {
+    
+    func backups() throws  -> [CoreBackup]
+    
+    /**
+     * Validate with the backup's own supplied credentials, then publish the
+     * exact encrypted bytes at a new destination. No live session is involved.
+     */
+    func restoreBackup(id: String, destination: String, password: String, keyFile: String?) throws  -> CoreRecoveryResult
+    
+}
+open class CoreRecovery: CoreRecoveryProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_keelocker_core_fn_clone_corerecovery(self.handle, $0) }
+    }
+    /**
+     * Capture the namespace identity once. Neither opening nor listing creates
+     * directories, reads the source payload, or requires its current credentials.
+     */
+public convenience init(path: String, backupDirectory: String?)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_constructor_corerecovery_new(
+        FfiConverterString.lower(path),
+        FfiConverterOptionString.lower(backupDirectory),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_keelocker_core_fn_free_corerecovery(handle, $0) }
+    }
+
+    
+
+    
+open func backups()throws  -> [CoreBackup]  {
+    return try  FfiConverterSequenceTypeCoreBackup.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_method_corerecovery_backups(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Validate with the backup's own supplied credentials, then publish the
+     * exact encrypted bytes at a new destination. No live session is involved.
+     */
+open func restoreBackup(id: String, destination: String, password: String, keyFile: String?)throws  -> CoreRecoveryResult  {
+    return try  FfiConverterTypeCoreRecoveryResult_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_method_corerecovery_restore_backup(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterString.lower(destination),
+        FfiConverterString.lower(password),
+        FfiConverterOptionString.lower(keyFile),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreRecovery: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = CoreRecovery
+
+    public static func lift(_ handle: UInt64) throws -> CoreRecovery {
+        return CoreRecovery(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: CoreRecovery) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreRecovery {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: CoreRecovery, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreRecovery_lift(_ handle: UInt64) throws -> CoreRecovery {
+    return try FfiConverterTypeCoreRecovery.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreRecovery_lower(_ value: CoreRecovery) -> UInt64 {
+    return FfiConverterTypeCoreRecovery.lower(value)
+}
+
+
+
+
+
+
 public protocol CoreVaultProtocol: AnyObject, Sendable {
     
     func attachment(entry: String, name: String) throws  -> Data
+    
+    /**
+     * Session-only root; owned directories are created privately on the first dirty save.
+     */
+    func configureBackupDirectory(path: String) throws 
     
     func createEntry(group: String, edit: CoreEntryEdit) throws  -> String
     
@@ -596,6 +755,8 @@ public protocol CoreVaultProtocol: AnyObject, Sendable {
     func deleteAttachment(entry: String, name: String) throws 
     
     func deleteEntry(id: String) throws 
+    
+    func deleteEntryPermanently(id: String) throws 
     
     func deleteGroup(id: String) throws 
     
@@ -623,6 +784,8 @@ public protocol CoreVaultProtocol: AnyObject, Sendable {
     func reloadIfChanged() throws  -> Bool
     
     func renameGroup(id: String, name: String) throws 
+    
+    func restoreEntry(id: String) throws 
     
     func save() throws 
     
@@ -721,6 +884,18 @@ open func attachment(entry: String, name: String)throws  -> Data  {
 })
 }
     
+    /**
+     * Session-only root; owned directories are created privately on the first dirty save.
+     */
+open func configureBackupDirectory(path: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_method_corevault_configure_backup_directory(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+}
+}
+    
 open func createEntry(group: String, edit: CoreEntryEdit)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
@@ -756,6 +931,15 @@ open func deleteAttachment(entry: String, name: String)throws   {try rustCallWit
 open func deleteEntry(id: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_keelocker_core_fn_method_corevault_delete_entry(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+open func deleteEntryPermanently(id: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_method_corevault_delete_entry_permanently(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(id),uniffiCallStatus
     )
@@ -876,6 +1060,15 @@ open func renameGroup(id: String, name: String)throws   {try rustCallWithError(F
             self.uniffiCloneHandle(),
         FfiConverterString.lower(id),
         FfiConverterString.lower(name),uniffiCallStatus
+    )
+}
+}
+    
+open func restoreEntry(id: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_keelocker_core_fn_method_corevault_restore_entry(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),uniffiCallStatus
     )
 }
 }
@@ -1015,6 +1208,74 @@ public func FfiConverterTypeCoreAttachmentMetadata_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeCoreAttachmentMetadata_lower(_ value: CoreAttachmentMetadata) -> RustBuffer {
     return FfiConverterTypeCoreAttachmentMetadata.lower(value)
+}
+
+
+public struct CoreBackup: Equatable, Hashable {
+    /**
+     * A recognized generation filename or digest-pinned original token, never a path.
+     */
+    public var id: String
+    public var createdAt: Int64?
+    public var size: UInt64
+    public var isOriginal: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * A recognized generation filename or digest-pinned original token, never a path.
+         */id: String, createdAt: Int64?, size: UInt64, isOriginal: Bool) {
+        self.id = id
+        self.createdAt = createdAt
+        self.size = size
+        self.isOriginal = isOriginal
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CoreBackup: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreBackup: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreBackup {
+        return
+            try CoreBackup(
+                id: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterOptionInt64.read(from: &buf), 
+                size: FfiConverterUInt64.read(from: &buf), 
+                isOriginal: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CoreBackup, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionInt64.write(value.createdAt, into: &buf)
+        FfiConverterUInt64.write(value.size, into: &buf)
+        FfiConverterBool.write(value.isOriginal, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreBackup_lift(_ buf: RustBuffer) throws -> CoreBackup {
+    return try FfiConverterTypeCoreBackup.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreBackup_lower(_ value: CoreBackup) -> RustBuffer {
+    return FfiConverterTypeCoreBackup.lower(value)
 }
 
 
@@ -1512,6 +1773,66 @@ public func FfiConverterTypeCoreOtp_lower(_ value: CoreOtp) -> RustBuffer {
 }
 
 
+public struct CoreRecoveryResult: Equatable, Hashable {
+    public var path: String
+    /**
+     * False means the copy committed but its directory durability is uncertain.
+     */
+    public var directorySynced: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String, 
+        /**
+         * False means the copy committed but its directory durability is uncertain.
+         */directorySynced: Bool) {
+        self.path = path
+        self.directorySynced = directorySynced
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CoreRecoveryResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCoreRecoveryResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CoreRecoveryResult {
+        return
+            try CoreRecoveryResult(
+                path: FfiConverterString.read(from: &buf), 
+                directorySynced: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CoreRecoveryResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.directorySynced, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreRecoveryResult_lift(_ buf: RustBuffer) throws -> CoreRecoveryResult {
+    return try FfiConverterTypeCoreRecoveryResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCoreRecoveryResult_lower(_ value: CoreRecoveryResult) -> RustBuffer {
+    return FfiConverterTypeCoreRecoveryResult.lower(value)
+}
+
+
 public struct CoreSnapshot: Equatable, Hashable {
     public var info: CoreVaultInfo
     public var groups: [CoreGroup]
@@ -1579,14 +1900,18 @@ public struct CoreVaultInfo: Equatable, Hashable {
     public var path: String
     public var dirty: Bool
     public var rootId: String
+    public var recycleBinId: String?
+    public var recycleBinEnabled: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(name: String, path: String, dirty: Bool, rootId: String) {
+    public init(name: String, path: String, dirty: Bool, rootId: String, recycleBinId: String?, recycleBinEnabled: Bool) {
         self.name = name
         self.path = path
         self.dirty = dirty
         self.rootId = rootId
+        self.recycleBinId = recycleBinId
+        self.recycleBinEnabled = recycleBinEnabled
     }
 
     
@@ -1608,7 +1933,9 @@ public struct FfiConverterTypeCoreVaultInfo: FfiConverterRustBuffer {
                 name: FfiConverterString.read(from: &buf), 
                 path: FfiConverterString.read(from: &buf), 
                 dirty: FfiConverterBool.read(from: &buf), 
-                rootId: FfiConverterString.read(from: &buf)
+                rootId: FfiConverterString.read(from: &buf), 
+                recycleBinId: FfiConverterOptionString.read(from: &buf), 
+                recycleBinEnabled: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -1617,6 +1944,8 @@ public struct FfiConverterTypeCoreVaultInfo: FfiConverterRustBuffer {
         FfiConverterString.write(value.path, into: &buf)
         FfiConverterBool.write(value.dirty, into: &buf)
         FfiConverterString.write(value.rootId, into: &buf)
+        FfiConverterOptionString.write(value.recycleBinId, into: &buf)
+        FfiConverterBool.write(value.recycleBinEnabled, into: &buf)
     }
 }
 
@@ -2082,6 +2411,31 @@ fileprivate struct FfiConverterSequenceTypeCoreAttachmentMetadata: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeCoreBackup: FfiConverterRustBuffer {
+    typealias SwiftType = [CoreBackup]
+
+    public static func write(_ value: [CoreBackup], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCoreBackup.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CoreBackup] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CoreBackup]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCoreBackup.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeCoreCustomField: FfiConverterRustBuffer {
     typealias SwiftType = [CoreCustomField]
 
@@ -2197,6 +2551,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_keelocker_core_checksum_method_corevault_attachment() != 18143) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_keelocker_core_checksum_method_corevault_configure_backup_directory() != 38907) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_keelocker_core_checksum_method_corevault_create_entry() != 11187) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2207,6 +2564,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_keelocker_core_checksum_method_corevault_delete_entry() != 29519) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_keelocker_core_checksum_method_corevault_delete_entry_permanently() != 33608) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_keelocker_core_checksum_method_corevault_delete_group() != 44693) {
@@ -2245,6 +2605,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_keelocker_core_checksum_method_corevault_rename_group() != 26385) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_keelocker_core_checksum_method_corevault_restore_entry() != 21747) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_keelocker_core_checksum_method_corevault_save() != 9448) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2257,10 +2620,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_keelocker_core_checksum_method_corevault_update_entry() != 16421) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_keelocker_core_checksum_method_corerecovery_backups() != 10052) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_keelocker_core_checksum_method_corerecovery_restore_backup() != 60895) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_keelocker_core_checksum_constructor_corevault_open() != 56833) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_keelocker_core_checksum_constructor_corevault_open_with_key_material() != 60904) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_keelocker_core_checksum_constructor_corerecovery_new() != 28556) {
         return InitializationResult.apiChecksumMismatch
     }
 

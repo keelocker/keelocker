@@ -95,14 +95,16 @@ fn deleting_entries_preserves_other_owners_and_cleans_all_historical_binaries() 
     let v = source(&p);
     let a = id(&v, "A");
     let b = id(&v, "B");
-    v.delete_entry(a).unwrap();
+    v.delete_entry(a.clone()).unwrap();
+    v.delete_entry_permanently(a).unwrap();
     assert_eq!(
         v.attachment(b.clone(), "shared.bin".into()).unwrap(),
         b"alpha"
     );
     assert_eq!(v.attachment(b.clone(), "beta.bin".into()).unwrap(), b"beta");
     v.save().unwrap();
-    v.delete_entry(b).unwrap();
+    v.delete_entry(b.clone()).unwrap();
+    v.delete_entry_permanently(b).unwrap();
     v.save().unwrap();
     assert_eq!(
         Database::parse(&fs::read(&p).unwrap(), key())
@@ -119,8 +121,10 @@ fn deleting_entry_with_two_names_for_one_binary_does_not_panic() {
     let v = source(&p);
     let a = id(&v, "A");
     let b = id(&v, "B");
-    v.delete_entry(b).unwrap();
-    v.delete_entry(a).unwrap();
+    v.delete_entry(b.clone()).unwrap();
+    v.delete_entry_permanently(b).unwrap();
+    v.delete_entry(a.clone()).unwrap();
+    v.delete_entry_permanently(a).unwrap();
     v.save().unwrap();
     assert!(v.snapshot().unwrap().entries.is_empty());
 }

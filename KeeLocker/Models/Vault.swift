@@ -10,6 +10,12 @@ struct Vault: Sendable {
     var isDirty = false
     var fileURL: URL? = nil
     var customIcons: [VaultCustomIcon] = []
+    var recycleBinID: UUID? = nil
+    var recycleBinEnabled = true
+
+    var recycledGroupIDs: Set<UUID> {
+        VaultGroupTree.recycleBinGroups(recycleBinID, in: groups)
+    }
 }
 
 struct VaultCommandResult: Sendable {
@@ -67,7 +73,7 @@ enum VaultFailure: Error, Equatable, Sendable {
         case .wrongPassword:
             "Couldn’t unlock this vault. Check the master password and try again."
         case .unsupportedDatabase:
-            "This vault uses a format or encryption setting that isn’t supported."
+            "This vault uses an unsupported format or encryption setting, or exceeds KeeLocker’s safety limits for file size or key derivation."
         case .corruptedDatabase:
             "This vault appears to be damaged or incomplete. Try another copy."
         case .failedToReadFile:
@@ -90,6 +96,8 @@ enum VaultCommand: Sendable {
     case createEntry(VaultEntry)
     case updateEntry(VaultEntry)
     case deleteEntry(UUID)
+    case restoreEntry(UUID)
+    case deleteEntryPermanently(UUID)
     case moveEntry(UUID, UUID)
     case createGroup(parent: UUID, name: String)
     case renameGroup(UUID, String)

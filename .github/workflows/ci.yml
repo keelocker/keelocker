@@ -102,6 +102,8 @@ jobs:
         run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin
       - name: Compare generated bindings with exported API
         run: bash scripts/check-bindings.sh
+      - name: Locked Rust tests on macOS, including filesystem safety
+        run: cargo test --locked -p keelocker-core --all-features
       - name: Build macOS app
         run: xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/keelocker-derived" build
       - name: Swift unit and bridge tests

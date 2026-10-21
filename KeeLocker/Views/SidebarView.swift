@@ -25,7 +25,7 @@ struct SidebarView: View {
                             SidebarRow(
                                 title: "All items",
                                 iconName: "square.stack.3d.up.fill",
-                                count: store.items.count,
+                                count: store.activeItemCount,
                                 isSelected: store.sidebarSelection == .allItems
                             ) {
                                 store.navigate(to: .allItems)
@@ -38,6 +38,15 @@ struct SidebarView: View {
                                 isSelected: store.sidebarSelection == .favorites
                             ) {
                                 store.navigate(to: .favorites)
+                            }
+
+                            if store.recycleBinEnabled || store.recycleBinID != nil {
+                                SidebarRow(title: "Recycle Bin", iconName: "trash",
+                                           count: store.recycleBinCount,
+                                           isSelected: store.sidebarSelection == .recycleBin) {
+                                    store.navigate(to: .recycleBin)
+                                }
+                                .accessibilityIdentifier("sidebar.recycleBin")
                             }
                         }
 
@@ -139,7 +148,7 @@ struct SidebarView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(store.vaultName)
                                 .font(.system(size: 13, weight: .semibold))
-                            Text("\(store.items.count) items · \(store.capabilities.canEdit ? (store.fileURL == nil ? "In-memory vault" : "Local file") : "Read-only")")
+                            Text("\(store.activeItemCount) items · \(store.capabilities.canEdit ? (store.fileURL == nil ? "In-memory vault" : "Local file") : "Read-only")")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

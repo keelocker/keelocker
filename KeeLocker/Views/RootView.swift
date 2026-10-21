@@ -6,15 +6,17 @@ struct RootView: View {
     @StateObject private var store = ProcessInfo.processInfo.arguments.contains("--demo-vault")
         ? VaultStore(items: MockVault.items)
         : VaultStore(preferences: ProcessInfo.processInfo.arguments.contains("--ignore-last-vault") ? nil : .standard,
-                     quickUnlock: ProcessInfo.processInfo.arguments.contains("--disable-touch-id") ? nil : SessionQuickUnlock.shared)
+                     quickUnlock: ProcessInfo.processInfo.arguments.contains("--disable-touch-id") ? nil : SessionQuickUnlock.shared,
+                     backupDirectory: URL.applicationSupportDirectory.appending(path: "KeeLocker/Backups", directoryHint: .isDirectory))
     @State private var showsUnlock = false
+    @State private var recoveryAfterUnlockDismissal: UUID?
     @State private var didOfferInitialUnlock = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sortOrder: ItemSortOrder = .recent
     @State private var listToolbarTitleWidth: CGFloat?
     @AppStorage("automaticallyDownloadWebsiteIcons") private var automaticallyDownloadWebsiteIcons = false
 
-    var body: some View {
+    private var rootContent: some View {
         Group {
             if store.isLocked {
                 LockedVaultView(
@@ -40,6 +42,7 @@ struct RootView: View {
         .focusedSceneValue(\.openVault, openVault)
         .focusedSceneValue(\.saveVault, canSave ? { store.run(.save) } : nil)
         .focusedSceneValue(\.saveVaultAs, canSave ? { VaultDialogs.saveAs(store) } : nil)
+        .focusedSceneValue(\.recoverVault, recoverVaultAction)
         .background(VaultWindowGuard(store: store))
         .overlay(alignment: .bottomTrailing) { if store.isBusy { ProgressView().controlSize(.small).padding() } }
         .alert(store.operationFailure?.title ?? "Touch ID", isPresented: Binding(get: {
@@ -70,13 +73,23 @@ struct RootView: View {
                 await store.refreshOTP()
             }
         }
+    }
+
+    var body: some View {
+        rootContent
         .sheet(isPresented: $showsUnlock, onDismiss: {
+            let recover = recoveryAfterUnlockDismissal == store.sessionID
+            recoveryAfterUnlockDismissal = nil
             if store.state != .unlocked { store.lock() }
+            if recover, store.supportsRecovery { store.isInspectingBackups = true }
         }) {
             UnlockVaultView(store: store) { showsUnlock = false }
         }
         .sheet(isPresented: Binding(get: { store.inspectedEntryID != nil }, set: { if !$0 { store.inspectedEntryID = nil } })) {
             if let id = store.inspectedEntryID { EntryFilesAndHistory(store: store, id: id) }
+        }
+        .sheet(isPresented: $store.isInspectingBackups) {
+            VaultRecoveryView(store: store)
         }
         .onChange(of: store.state) { _, state in
             if state == .unlocked { showsUnlock = false }
@@ -85,6 +98,15 @@ struct RootView: View {
 
     private func requestUnlock() {
         if store.requiresPassword { showsUnlock = true } else { store.unlock() }
+    }
+
+    private func requestRecovery() {
+        if showsUnlock {
+            recoveryAfterUnlockDismissal = store.sessionID
+            showsUnlock = false
+        } else {
+            store.isInspectingBackups = true
+        }
     }
 
     private func openVault() {
@@ -105,8 +127,13 @@ struct RootView: View {
     }
 
     private var createVaultItemAction: (() -> Void)? {
-        guard !store.isLocked, !store.isBusy, !store.hasDraft, store.capabilities.canCreate else { return nil }
+        guard store.canCreateInCurrentScope else { return nil }
         return { store.addItem() }
+    }
+
+    private var recoverVaultAction: (() -> Void)? {
+        guard store.supportsRecovery, !store.isBusy, !store.hasDraft, store.state != .unlocking else { return nil }
+        return requestRecovery
     }
 
     private var createVaultGroupAction: (() -> Void)? {
@@ -140,7 +167,7 @@ struct RootView: View {
                             listTitle
                         }
                     }
-                    ToolbarActionGroup(sortOrder: $sortOrder, canCreate: store.capabilities.canCreate && !store.isBusy && !store.hasDraft, addAction: store.addItem)
+                    ToolbarActionGroup(sortOrder: $sortOrder, canCreate: store.canCreateInCurrentScope, addAction: store.addItem)
                 }
         } detail: {
             detailColumn
@@ -193,11 +220,11 @@ struct RootView: View {
                     get: { store.selectedEntry ?? store.items.first { $0.id == selectedID } ?? .empty },
                     set: store.updateItem
                 ),
-                canEdit: store.capabilities.canEdit && store.selectedEntry != nil && !store.isBusy,
-                canFavorite: store.capabilities.canFavorite,
+                canEdit: store.canEditEntry(id: selectedID) && store.selectedEntry != nil && !store.isBusy,
+                canFavorite: store.capabilities.canFavorite && !store.isInRecycleBin(id: selectedID),
                 hasDraft: $store.hasDraft,
                 onSave: { item in await store.saveItem(item) },
-                onBeginEditing: { !store.isBusy && !store.isLocked && store.selectedEntry != nil },
+                onBeginEditing: { !store.isBusy && store.canEditEntry(id: selectedID) && store.selectedEntry != nil },
                 customIcons: store.customIcons
             )
             .id(selectedID)

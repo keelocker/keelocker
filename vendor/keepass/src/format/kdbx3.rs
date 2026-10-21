@@ -1,7 +1,7 @@
 use crate::{
     config::{CompressionConfig, DatabaseConfig, InnerCipherConfig, KdfConfig, OuterCipherConfig},
     crypt::{calculate_sha256, ciphers::Cipher},
-    db::{Database, DatabaseFormatError, DatabaseOpenError},
+    db::{Database, DatabaseFormatError, DatabaseOpenError, KdbxLimits},
     format::DatabaseVersion,
     key::{DatabaseKey, DatabaseKeyError},
 };
@@ -202,7 +202,7 @@ pub(crate) fn parse_kdbx3(
     data: &[u8],
     db_key: &DatabaseKey,
 ) -> Result<Database, DatabaseOpenError> {
-    let (config, mut inner_decryptor, xml) = decrypt_kdbx3(data, db_key)?;
+    let (config, mut inner_decryptor, xml, _) = decrypt_kdbx3(data, db_key, None)?;
 
     // Parse XML data blocks
     let mut db =
@@ -220,11 +220,15 @@ pub(crate) fn parse_kdbx3(
 pub(crate) fn decrypt_kdbx3(
     data: &[u8],
     db_key: &DatabaseKey,
-) -> Result<(DatabaseConfig, Box<dyn Cipher>, Vec<u8>), DatabaseOpenError> {
+    limits: Option<&KdbxLimits>,
+) -> Result<(DatabaseConfig, Box<dyn Cipher>, Vec<u8>, Option<usize>), DatabaseOpenError> {
     let version = DatabaseVersion::parse(data)?;
     let header = parse_outer_header(data).map_err(|e| {
         DatabaseOpenError::Format(DatabaseFormatError::Kdbx3(Kdbx3OpenError::OuterHeader(e)))
     })?;
+    if let Some(limits) = limits {
+        limits.validate_kdf(&header.kdf_config)?;
+    }
 
     let inner_decryptor = header
         .inner_cipher
@@ -324,7 +328,11 @@ pub(crate) fn decrypt_kdbx3(
         block_index += 1;
     }
 
-    let xml = compression.decompress(&buf)?;
+    let xml = match limits {
+        Some(limits) => compression.decompress_limited(&buf, limits.max_decompressed_bytes)?,
+        None => compression.decompress(&buf)?,
+    };
+    let remaining = limits.map(|limits| limits.max_decompressed_bytes - xml.len());
 
     // Authenticate the original header before protected values are decrypted.
     // KDBX 3.1 carries this hash inside the encrypted XML payload.
@@ -351,7 +359,7 @@ pub(crate) fn decrypt_kdbx3(
         )));
     }
 
-    Ok((config, inner_decryptor, xml))
+    Ok((config, inner_decryptor, xml, remaining))
 }
 
 /// Errors related to opening a KDBX3 database

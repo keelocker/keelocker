@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 protocol RustVaultOpening: Sendable {
     func open(path: String, password: String, keyFile: String?) throws -> CoreVault
@@ -6,11 +7,23 @@ protocol RustVaultOpening: Sendable {
 }
 
 private struct NativeRustVaultOpening: RustVaultOpening {
+    let backupDirectory: URL?
+
     func open(path: String, password: String, keyFile: String?) throws -> CoreVault {
-        try CoreVault.open(path: path, password: password, keyFile: keyFile)
+        try configure(CoreVault.open(path: path, password: password, keyFile: keyFile))
     }
     func open(path: String, keyMaterial: Data) throws -> CoreVault {
-        try CoreVault.openWithKeyMaterial(path: path, material: keyMaterial)
+        try configure(CoreVault.openWithKeyMaterial(path: path, material: keyMaterial))
+    }
+
+    private func configure(_ vault: CoreVault) throws -> CoreVault {
+        do {
+            if let backupDirectory { try vault.configureBackupDirectory(path: backupDirectory.path) }
+            return vault
+        } catch {
+            vault.lock()
+            throw error
+        }
     }
 }
 
@@ -21,18 +34,23 @@ final class RustVaultRepository: VaultRepository {
     let capabilities = VaultCapabilities.persistent
     let requiresPassword = true
     let supportsQuickUnlock = true
+    let supportsRecovery = true
     private var url: URL
     private var session: CoreVault?
     private var generation = UUID()
     private let loadAdmission: VaultLoadAdmission
     private let opening: any RustVaultOpening
+    private let backupDirectory: URL?
     private var loadRequest: VaultLoadAdmission.Request?
+    private var selectionResolution: Task<URL, Never>?
 
     init(url: URL, loadAdmission: VaultLoadAdmission? = nil,
-         opening: any RustVaultOpening = NativeRustVaultOpening()) {
+         opening: (any RustVaultOpening)? = nil, backupDirectory: URL? = nil) {
         self.url = url
+        selectionResolution = Task.detached(priority: .userInitiated) { Self.canonicalSelection(url) }
         self.loadAdmission = loadAdmission ?? .shared
-        self.opening = opening
+        self.opening = opening ?? NativeRustVaultOpening(backupDirectory: backupDirectory)
+        self.backupDirectory = backupDirectory
     }
 
     func load(password: String, keyFile: URL?) async throws -> Vault {
@@ -57,8 +75,47 @@ final class RustVaultRepository: VaultRepository {
         return material
     }
 
+    func backups() async throws -> [VaultBackup] {
+        try await resolveSelection()
+        let request = generation
+        let path = url.path
+        let backupRoot = backupDirectory?.path
+        do {
+            let result = try await Task.detached(priority: .userInitiated) {
+                let recovery = try CoreRecovery(path: path, backupDirectory: backupRoot)
+                return try recovery.backups().map {
+                    VaultBackup(id: $0.id, createdAt: $0.createdAt.map { Date(timeIntervalSince1970: Double($0)) },
+                                size: $0.size, isOriginal: $0.isOriginal)
+                }
+            }.value
+            guard !Task.isCancelled, request == generation else { throw CancellationError() }
+            return result
+        } catch { throw Self.failure(error) }
+    }
+
+    func restoreBackup(_ backup: VaultBackup, to destination: URL, password: String, keyFile: URL?) async throws -> VaultRecoveryResult {
+        try await resolveSelection()
+        let request = generation
+        let path = url.path
+        let backupRoot = backupDirectory?.path
+        do {
+            let result = try await Task.detached(priority: .userInitiated) {
+                let recovery = try CoreRecovery(path: path, backupDirectory: backupRoot)
+                let result = try recovery.restoreBackup(id: backup.id, destination: destination.path,
+                                                        password: password, keyFile: keyFile?.path)
+                return VaultRecoveryResult(url: URL(fileURLWithPath: result.path), directorySynced: result.directorySynced)
+            }.value
+            guard !Task.isCancelled, request == generation else { throw CancellationError() }
+            return result
+        } catch {
+            if (error as? CoreError) == .Conflict { throw VaultFailure.destinationExists }
+            throw Self.failure(error)
+        }
+    }
+
     private func load(_ open: @escaping @Sendable (String) throws -> CoreVault) async throws -> Vault {
         try Task.checkCancellation()
+        try await resolveSelection()
         if let loadRequest { loadAdmission.cancel(loadRequest) }
         let request = UUID()
         generation = request
@@ -102,6 +159,39 @@ final class RustVaultRepository: VaultRepository {
         Task.detached { closing?.lock() }
     }
 
+    private func resolveSelection() async throws {
+        guard let resolution = selectionResolution else { return }
+        let request = generation
+        let resolved = await resolution.value
+        guard !Task.isCancelled, request == generation else { throw CancellationError() }
+        url = resolved
+        selectionResolution = nil
+    }
+
+    nonisolated private static func canonicalSelection(_ selected: URL) -> URL {
+        // Foundation deliberately abbreviates /private/var to /var even after
+        // resolving symlinks. Recovery namespaces require the native realpath.
+        // Resolve existing ancestors off the main thread, retaining a missing
+        // vault/parent suffix so recovery still works after files are removed.
+        var current = selected.absoluteURL
+        var missing: [String] = []
+        while true {
+            let resolved: URL? = current.withUnsafeFileSystemRepresentation { path in
+                guard let path, let canonical = realpath(path, nil) else { return nil }
+                defer { free(canonical) }
+                return URL(fileURLWithPath: String(cString: canonical))
+            }
+            if var resolved {
+                for component in missing.reversed() { resolved.appendPathComponent(component) }
+                return resolved
+            }
+            let parent = current.deletingLastPathComponent()
+            guard parent.path != current.path else { return selected }
+            missing.append(current.lastPathComponent)
+            current = parent
+        }
+    }
+
     func execute(_ command: VaultCommand) async throws -> VaultCommandResult {
         guard let session else { throw VaultFailure.invalidOperation }
         let request = generation
@@ -116,6 +206,8 @@ final class RustVaultRepository: VaultRepository {
                     guard !item.isRedacted else { throw VaultFailure.invalidOperation }
                     try session.updateEntry(id: item.id.uuidString, edit: Self.edit(item))
                 case .deleteEntry(let id): try session.deleteEntry(id: id.uuidString)
+                case .restoreEntry(let id): try session.restoreEntry(id: id.uuidString)
+                case .deleteEntryPermanently(let id): try session.deleteEntryPermanently(id: id.uuidString)
                 case .moveEntry(let id, let destination): try session.moveEntry(id: id.uuidString, destination: destination.uuidString)
                 case .createGroup(let parent, let name): _ = try session.createGroup(parent: parent.uuidString, name: name)
                 case .renameGroup(let id, let name): try session.renameGroup(id: id.uuidString, name: name)
@@ -258,7 +350,9 @@ final class RustVaultRepository: VaultRepository {
                              summary.isRedacted = true
                              return summary
                          },
-                         isDirty: source.info.dirty, fileURL: URL(fileURLWithPath: source.info.path), customIcons: icons)
+                         isDirty: source.info.dirty, fileURL: URL(fileURLWithPath: source.info.path), customIcons: icons,
+                         recycleBinID: source.info.recycleBinId.flatMap(UUID.init(uuidString:)),
+                         recycleBinEnabled: source.info.recycleBinEnabled)
     }
 
     nonisolated private static func iconIndex(_ icons: [VaultCustomIcon]) -> [UUID: VaultCustomIcon] {

@@ -9,6 +9,7 @@ struct KeeLockerApp: App {
     @FocusedValue(\.openVault) private var openVault
     @FocusedValue(\.saveVault) private var saveVault
     @FocusedValue(\.saveVaultAs) private var saveVaultAs
+    @FocusedValue(\.recoverVault) private var recoverVault
 
     private var appearance: AppearanceChoice {
         AppearanceChoice(rawValue: appearanceRawValue) ?? .system
@@ -41,6 +42,9 @@ struct KeeLockerApp: App {
                     .keyboardShortcut("s").disabled(saveVault == nil)
                 Button("Save As…") { saveVaultAs?() }
                     .keyboardShortcut("s", modifiers: [.command, .shift]).disabled(saveVaultAs == nil)
+                Divider()
+                Button("Recovery Copies…") { recoverVault?() }
+                    .disabled(recoverVault == nil)
             }
         }
 
@@ -65,8 +69,13 @@ private struct OpenVaultFocusedValueKey: FocusedValueKey {
 
 private struct SaveVaultFocusedValueKey: FocusedValueKey { typealias Value = () -> Void }
 private struct SaveVaultAsFocusedValueKey: FocusedValueKey { typealias Value = () -> Void }
+private struct RecoverVaultFocusedValueKey: FocusedValueKey { typealias Value = () -> Void }
 
 extension FocusedValues {
+    var recoverVault: (() -> Void)? {
+        get { self[RecoverVaultFocusedValueKey.self] }
+        set { self[RecoverVaultFocusedValueKey.self] = newValue }
+    }
     var createVaultGroup: (() -> Void)? {
         get { self[CreateVaultGroupFocusedValueKey.self] }
         set { self[CreateVaultGroupFocusedValueKey.self] = newValue }

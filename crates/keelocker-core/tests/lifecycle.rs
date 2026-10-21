@@ -1206,6 +1206,7 @@ fn metadata_uuid_icons_timestamps_and_deletion_survive() {
         before.created_at
     );
     v.delete_entry(id.to_string()).unwrap();
+    v.delete_entry_permanently(id.to_string()).unwrap();
     v.save().unwrap();
     let reopened = Database::parse(&fs::read(&p).unwrap(), key()).unwrap();
     assert!(reopened.entry(id).is_none());

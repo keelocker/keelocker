@@ -36,9 +36,18 @@ pub fn parse_xml(
     header_attachments: &[Value<Vec<u8>>],
     inner_decryptor: &mut dyn Cipher,
 ) -> Result<crate::db::Database, ParseXmlError> {
+    parse_xml_with_limit(data, header_attachments, inner_decryptor, None)
+}
+
+pub(crate) fn parse_xml_with_limit(
+    data: &[u8],
+    header_attachments: &[Value<Vec<u8>>],
+    inner_decryptor: &mut dyn Cipher,
+    remaining_payload_bytes: Option<usize>,
+) -> Result<crate::db::Database, ParseXmlError> {
     let mut kdbx: KeePassFile = quick_xml::de::from_reader(data)?;
     whitespace::restore(data, &mut kdbx.root.group)?;
-    Ok(kdbx.xml_to_db(inner_decryptor, header_attachments)?)
+    Ok(kdbx.xml_to_db(inner_decryptor, header_attachments, remaining_payload_bytes)?)
 }
 
 mod whitespace;
@@ -122,6 +131,7 @@ impl KeePassFile {
         mut self,
         inner_decryptor: &mut dyn Cipher,
         header_attachments: &[Value<Vec<u8>>],
+        mut remaining_payload_bytes: Option<usize>,
     ) -> Result<crate::db::Database, UnprotectError> {
         let mut db =
             crate::db::Database::new_with_root_id(GroupId::from_uuid(self.root.group.uuid.0));
@@ -145,7 +155,10 @@ impl KeePassFile {
                 if attachments.contains_key(&id) {
                     return Err(UnprotectError::DuplicateAttachmentId(id.id()));
                 }
-                let data = binary.xml_to_db(inner_decryptor)?;
+                let data = binary.xml_to_db(inner_decryptor, remaining_payload_bytes)?;
+                if let Some(remaining) = &mut remaining_payload_bytes {
+                    *remaining -= data.get().len();
+                }
 
                 attachments.insert(
                     id,

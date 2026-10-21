@@ -21,7 +21,7 @@ The stable Rust job fetches locked dependency sources and checks the generated
 third-party notices. Stale or missing notice output fails CI.
 
 The Apple Silicon macOS job selects an explicit Xcode installation, checks
-generated bindings, builds the app and runs `KeeLockerTests`. `KeeLockerUITests`
+generated bindings, runs Rust tests on the native filesystem, builds the app and runs `KeeLockerTests`. `KeeLockerUITests`
 and native fingerprint authentication require host automation/hardware support
 and are outside the hosted workflow. A green unit-test job does not prove those
 checks passed.
@@ -39,6 +39,7 @@ do not imply a byte-for-byte reproducible environment.
 | Store state, drafts, selection, capabilities or async lifecycle | Swift unit/store tests in [VaultStoreTests.swift](../KeeLockerTests/VaultStoreTests.swift); retain demo behavior and exercise delayed results around Lock/session replacement. |
 | Clipboard ownership or cleanup | [ClipboardTests.swift](../KeeLockerTests/ClipboardTests.swift); use a uniquely named synthetic pasteboard, exercise timeout and confirmed/cancelled termination, and preserve another writer's clipboard value. |
 | Swift adapter, favorites, autosave or file monitoring | Swift bridge tests plus Rust tests; use temporary files to check save/reopen, external atomic and in-place writes, conflicts and Save As. |
+| Recovery copies or recycle-bin behavior | Rust recovery/recycle regressions, independent KeePassXC reopen, Swift `RecoveryTests` and recycle tests; run the focused native recovery/recycle UI flow. Preserve dirty edits and test failed unlock, stale selection, existing destinations and permanent-delete confirmation. |
 | Rust commands, mapping, save, parser or vendor patch | Rust regressions plus independent KeePassXC interoperability; run Clippy/format checks. Verify preservation of data the UI does not edit. |
 | Exported Rust API or DTO | Regenerate all UniFFI artifacts, build the app and run Swift bridge tests as well as Rust tests. |
 | UI interaction or hierarchy | Swift tests and focused UI/manual checks on the existing design. Report native picker/focus/layout behavior separately from unit coverage. |
@@ -49,6 +50,14 @@ Rust regressions live in the [integration test directory](../crates/keelocker-co
 and inline unit-test modules. Persistence fault injection belongs beside the
 save implementation so production APIs do not expose test controls. The vendor
 patch document names the upstream invariants these regressions protect.
+
+Backup and persistence regressions use synthetic files in private temporary
+directories. Exercise failures before commit, post-commit warnings, external
+replacement and recovery from pinned/versioned copies. Abrupt subprocess exit
+tests model process termination without cleanup; injected disk-full errors
+model failing writes. These do not simulate a power cut or prove filesystem
+durability on every storage provider. Keep test controls behind `cfg(test)`;
+production must not read failure-injection environment variables.
 
 ## KeePassXC interoperability
 
@@ -138,6 +147,14 @@ can block the macro server, XCTest or authentication services; report actual
 coverage and use host-approved execution for these native checks.
 
 A useful real-file smoke check is: open/unlock → select/search actual entries → create a draft inside a group → cancel without a file change → Save a draft and independently reopen → edit externally in KeePassXC and observe reload → edit/save again → exercise conflict recovery if changed → Lock and check that entries/details clear. Verify UI-specific scope/focus behavior only when it is relevant to the change.
+
+`testRecoveryCopyAndRecycleBinNativeFlow` uses a temporary synthetic fixture:
+delete into Recycle Bin, Restore to the previous group, verify with KeePassXC,
+then restore the pinned original to a new file through Recovery Copies.
+Inspect the recovery sheet at normal and minimum window sizes in both system
+appearances. Confirm keyboard dismissal, password/key-file selection and visible
+error/committed-copy status. Native picker/XCTest initialization failures are
+coverage gaps; report them separately from successful unit and bridge tests.
 
 ## Entry icon checks
 

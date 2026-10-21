@@ -150,7 +150,6 @@ fn deleting_custom_icon_group_cleans_references_and_remains_savable() {
     db.meta.last_selected_group = Some(id.uuid());
     db.meta.last_top_visible_group = Some(id.uuid());
     db.meta.entry_templates_group = Some(id.uuid());
-    db.meta.recyclebin_uuid = Some(id.uuid());
     db.save(&mut fs::File::create(&source).unwrap(), key())
         .unwrap();
     let vault = CoreVault::open(path(&source), PASSWORD.into(), None).unwrap();

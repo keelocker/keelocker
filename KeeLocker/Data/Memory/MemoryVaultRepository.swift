@@ -5,10 +5,14 @@ final class MemoryVaultRepository: VaultRepository {
     let capabilities = VaultCapabilities.editable
     let requiresPassword = false
     private(set) var vault: Vault
+    private var previousParents: [UUID: UUID] = [:]
+    private var versions: [UUID: [VaultEntry]] = [:]
 
     init(items: [VaultItem] = MockVault.items) {
         vault = Vault(name: "Personal Vault", groups: VaultGroup.sampleGroups, entries: items)
     }
+
+    init(vault: Vault) { self.vault = vault }
 
     func load(password: String, keyFile: URL?) async throws -> Vault { vault }
 
@@ -20,37 +24,111 @@ final class MemoryVaultRepository: VaultRepository {
     func execute(_ command: VaultCommand) async throws -> VaultCommandResult {
         switch command {
         case .reload: break
-        case .createEntry(let entry): vault.entries.insert(committed(entry), at: 0)
+        case .createEntry(let entry):
+            try requireWritableGroup(entry.group.id)
+            guard !entry.isRedacted, !vault.entries.contains(where: { $0.id == entry.id }) else { throw VaultFailure.invalidOperation }
+            vault.entries.insert(committed(entry), at: 0)
         case .updateEntry(let entry):
+            try requireWritableEntry(entry.id)
+            try requireWritableGroup(entry.group.id)
+            guard !entry.isRedacted else { throw VaultFailure.invalidOperation }
             guard let i = vault.entries.firstIndex(where: { $0.id == entry.id }) else { throw VaultFailure.invalidOperation }
             vault.entries[i] = committed(entry)
-        case .deleteEntry(let id): vault.entries.removeAll { $0.id == id }
+        case .deleteEntry(let id):
+            try requireWritableEntry(id)
+            if vault.recycleBinEnabled {
+                let bin = try ensureRecycleBin()
+                try move(id, to: bin, preservingHistory: true)
+            } else {
+                vault.entries.removeAll { $0.id == id }
+                versions[id] = nil
+                previousParents[id] = nil
+            }
+        case .restoreEntry(let id):
+            guard let source = vault.entries.first(where: { $0.id == id }),
+                  vault.recycledGroupIDs.contains(source.group.id),
+                  let root = vault.groups.first(where: { $0.parentID == nil }) else { throw VaultFailure.invalidOperation }
+            let previous = previousParents[id].flatMap { parent in
+                vault.groups.first { $0.id == parent && !vault.recycledGroupIDs.contains($0.id) }
+            }
+            try move(id, to: previous ?? root, preservingHistory: true)
+        case .deleteEntryPermanently(let id):
+            guard let source = vault.entries.first(where: { $0.id == id }),
+                  vault.recycledGroupIDs.contains(source.group.id) else { throw VaultFailure.invalidOperation }
+            vault.entries.removeAll { $0.id == id }
+            versions[id] = nil
+            previousParents[id] = nil
         case .moveEntry(let id, let groupID):
-            guard let i = vault.entries.firstIndex(where: { $0.id == id }),
-                  let group = vault.groups.first(where: { $0.id == groupID }) else { throw VaultFailure.invalidOperation }
-            vault.entries[i].group = group
+            try requireWritableEntry(id)
+            try requireWritableGroup(groupID)
+            guard let group = vault.groups.first(where: { $0.id == groupID }) else { throw VaultFailure.invalidOperation }
+            try move(id, to: group)
         case .createGroup(let parent, let name):
+            try requireWritableGroup(parent)
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw VaultFailure.invalidOperation }
             guard let group = vault.groups.first(where: { $0.id == parent }) else { throw VaultFailure.invalidOperation }
             vault.groups.append(VaultGroup(id: UUID(), name: name, parentID: parent, path: group.path + " / " + name))
         case .renameGroup(let id, let name):
+            try requireWritableGroup(id)
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw VaultFailure.invalidOperation }
             guard let i = vault.groups.firstIndex(where: { $0.id == id }) else { throw VaultFailure.invalidOperation }
             vault.groups[i].name = name
             rebuildPaths()
         case .moveGroup(let id, let parent):
+            try requireWritableGroup(id)
+            try requireWritableGroup(parent)
+            guard vault.groups.first(where: { $0.id == id })?.parentID != nil else { throw VaultFailure.invalidOperation }
             var ancestor: UUID? = parent
+            var visited: Set<UUID> = []
             while let a = ancestor {
-                guard a != id else { throw VaultFailure.invalidOperation }
+                guard a != id, visited.insert(a).inserted else { throw VaultFailure.invalidOperation }
                 ancestor = vault.groups.first(where: { $0.id == a })?.parentID
             }
             guard let i = vault.groups.firstIndex(where: { $0.id == id }), vault.groups.contains(where: { $0.id == parent }) else { throw VaultFailure.invalidOperation }
             vault.groups[i].parentID = parent
             rebuildPaths()
         case .deleteGroup(let id):
+            try requireWritableGroup(id)
+            guard vault.groups.first(where: { $0.id == id })?.parentID != nil else { throw VaultFailure.invalidOperation }
             guard !vault.entries.contains(where: { $0.group.id == id }), !vault.groups.contains(where: { $0.parentID == id }) else { throw VaultFailure.invalidOperation }
             vault.groups.removeAll { $0.id == id }
         default: throw VaultFailure.invalidOperation
         }
         return VaultCommandResult(vault: vault)
+    }
+
+    func history(_ id: UUID) async throws -> [VaultEntry] { versions[id] ?? [] }
+
+    private func requireWritableGroup(_ id: UUID) throws {
+        guard vault.groups.contains(where: { $0.id == id }), !vault.recycledGroupIDs.contains(id) else {
+            throw VaultFailure.invalidOperation
+        }
+    }
+
+    private func requireWritableEntry(_ id: UUID) throws {
+        guard let entry = vault.entries.first(where: { $0.id == id }) else { throw VaultFailure.invalidOperation }
+        try requireWritableGroup(entry.group.id)
+    }
+
+    private func ensureRecycleBin() throws -> VaultGroup {
+        if let id = vault.recycleBinID, vault.recycledGroupIDs.contains(id),
+           let bin = vault.groups.first(where: { $0.id == id }) { return bin }
+        guard let root = vault.groups.first(where: { $0.parentID == nil }) else { throw VaultFailure.invalidOperation }
+        let bin = VaultGroup(id: UUID(), name: "Recycle Bin", parentID: root.id,
+                             path: root.path + " / Recycle Bin", iconName: "trash",
+                             createdAt: .now, modifiedAt: .now)
+        vault.groups.append(bin)
+        vault.recycleBinID = bin.id
+        return bin
+    }
+
+    private func move(_ id: UUID, to group: VaultGroup, preservingHistory: Bool = false) throws {
+        guard let i = vault.entries.firstIndex(where: { $0.id == id }) else { throw VaultFailure.invalidOperation }
+        let previous = vault.entries[i]
+        if !preservingHistory { versions[id, default: []].insert(previous, at: 0) }
+        previousParents[id] = previous.group.id
+        vault.entries[i].group = group
+        if !preservingHistory { vault.entries[i].historyCount = (versions[id] ?? []).count }
     }
 
     private func committed(_ entry: VaultEntry) -> VaultEntry {
