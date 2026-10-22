@@ -37,7 +37,11 @@ See [Session Quick Unlock](docs/touch-id.md) for the protection model and limits
   protected values and key files.
 - Edit entries, nested groups, tags and protected custom fields. Add, replace,
   delete and export attachments; inspect entry history. Empty groups can be
-  deleted; deleting an entry records a tombstone.
+  deleted. Entry deletion honors the vault's recycle-bin setting. Enabled
+  deletion moves the entry to Recycle Bin, where Restore returns it to its old
+  group or the root. Delete Permanently requires a separate confirmation and
+  records a tombstone. A vault with its recycle bin disabled requires an explicit
+  permanent-deletion confirmation.
 - Display and choose entry icons: all 69 standard KeePass icons appear as native
   SF Symbols, and custom images embedded in the vault are displayed as images.
   In Edit, click the entry icon to choose one or import an image. Selection and
@@ -70,7 +74,7 @@ See [Session Quick Unlock](docs/touch-id.md) for the protection model and limits
   outside the main thread.
 
 Database creation, master-key changes, automatic merge, history restoration,
-recycle-bin UI, field-reference expansion, auto-type execution, group icon editing,
+field-reference expansion, auto-type execution, group icon editing,
 persistent Keychain unlock, cloud sync and hardware keys are not implemented.
 Twofish is outside the tested interoperability matrix.
 
@@ -82,6 +86,24 @@ bytes. It writes a private temporary file beside the destination, syncs it,
 creates an encrypted `.bak` of the previous source, checks for external changes
 and atomically replaces the source. Vault saving writes no plaintext. Attachment
 export deliberately writes the selected attachment to the chosen destination.
+
+Before the first replacement, KeeLocker also preserves the original encrypted
+file and keeps versioned recovery copies in
+`~/Library/Application Support/KeeLocker/Backups`. Each vault's canonical path
+has its own directory. The pinned `original.kdbx` is never rotated; history keeps
+the latest 20 versions and one version per day for the last 30 days. Copies
+contain the original encrypted KDBX bytes, with private file permissions. A
+required backup failure stops replacement and retains the edit in memory.
+Save without changes leaves the vault and its recovery copies untouched.
+
+Use **File → Recovery Copies…** to browse these versions, including after a
+failed unlock or when the source file is damaged or missing. Select a version,
+enter the password and optional key file that belonged to it, and choose
+**Restore Copy…**. KeeLocker validates the copy and writes its exact encrypted
+bytes to a new `.kdbx` file, leaving the current vault and unsaved edits intact.
+An existing destination is never replaced. Open the recovered file explicitly
+when ready. Keep an independent backup on another device: local recovery copies
+cannot protect against loss of the Mac or its disk.
 
 A failed write keeps the edit in memory and marks the vault unsaved. Save retries
 the write; Save As preserves a separate copy. Open, Lock and exit guard unsaved
@@ -98,9 +120,15 @@ changes. Save As refuses an existing different destination.
   warning. The encrypted backup remains a recovery option.
 - Existing ACLs and extended attributes are not copied. Keep independent backups
   and verify permissions when using shared or managed files.
-- Hostile-file resource and KDF limits are not implemented. Some authentication
-  damage is indistinguishable from wrong credentials. Swift strings and copied
-  buffers are not guaranteed to be zeroed; plaintext exists while unlocked.
+- Input reads, decompression and key derivation have fixed safety limits; a
+  database outside them is rejected without changing its encryption settings.
+  The supported bounds are 256 MiB for the encrypted file and expanded payload,
+  16 MiB for a key file, 256 MiB/100 iterations/16 lanes for Argon2, and
+  100 million AES-KDF rounds. These are admission limits, not a guarantee of
+  constant memory usage or instant cancellation.
+  Some authentication damage is indistinguishable from wrong credentials.
+  Swift strings and copied buffers are not guaranteed to be zeroed; plaintext
+  exists while unlocked.
 
 The [architecture document](docs/architecture.md) specifies save validation,
 session lifetime and conflict recovery. KDBX parsing, encryption and KDFs use the

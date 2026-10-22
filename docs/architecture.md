@@ -96,7 +96,22 @@ updates observation even when directory sync failed after a committed Save As.
 Do not keep the previous path or discard the committed snapshot because the
 operation carries a durability warning.
 
-Use capabilities to enable actions. Do not couple UI behavior to a `repository is RustVaultRepository` check. Empty groups can be deleted; entry deletion records a tombstone rather than moving the entry to the recycle bin.
+Use capabilities to enable actions. Do not couple UI behavior to a
+`repository is RustVaultRepository` check. Empty groups can be deleted. Entry
+deletion honors the imported recycle-bin setting (absent defaults to enabled).
+Enabled deletion moves into a valid bin or creates one, preserving the entry's
+UUID, history and assets. A stale/root bin UUID is never treated as the trash
+subtree. Existing nested groups inside the bin remain part of the trash.
+Trash and Restore use location-only moves with previous-parent/location-time
+updates. They never checkpoint or prune history, even at imported retention
+capacity; ordinary edits and moves continue to honor those limits.
+Only an explicit permanent-delete command destroys an entry already in trash;
+when the imported setting is disabled, the ordinary deletion confirmation
+explicitly describes permanent destruction. Final deletion records a tombstone.
+Restore uses the saved previous parent when it still exists outside trash,
+otherwise the database root. The store excludes the bin subtree from active
+counts, search, favorites, normal group destinations and automatic icon changes.
+Trashed entries remain inspectable and have Restore/Delete Permanently actions.
 
 Tag input stays verbatim in the editing draft. Split semicolon-delimited input,
 trim each tag and remove empty values only when constructing the saved entry.
@@ -213,7 +228,7 @@ Read [io.rs](../crates/keelocker-core/src/kdbx/io.rs) and [roundtrip.rs](../crat
 
 1. Serialize with fresh library-generated encryption parameters, reopen and compare the complete model, including protected values, history and attachment bytes.
 2. Write only encrypted bytes to a private temporary file in the destination directory and sync it.
-3. For the opened file, verify its expected hash, create an encrypted `.bak`, recheck the source and atomically replace it. For a new destination, refuse replacement.
+3. For the opened file, verify its expected hash, preserve the pinned encrypted original and a versioned recovery copy, sync the backup directory, create an encrypted `.bak`, recheck the source and atomically replace it. Required backup failure leaves the source unchanged. For a new destination, refuse replacement.
 4. Sync the directory. Once replacement commits, adopt the written path/hash even if directory sync fails. Keep the session dirty and report the durability failure so Save can retry without conflicting with KeeLocker's own bytes. Save As must also retain its committed destination.
 
 Saving upgrades supported older databases to KDBX 4.1 while retaining cipher/KDF settings. Unknown structures the writer cannot preserve are rejected conservatively. History and shared attachment ownership must survive changes even when the UI does not expose those values.
@@ -225,7 +240,62 @@ parsing. Attachment validation hashes bytes directly. Complete-model comparison
 normalizes derived binary IDs and history-parent references without dropping
 history or shared attachment bytes.
 
-There is no multi-writer transaction: a small hash-check/rename race remains. Directory-sync failure can report failure after rename, and existing ACLs/extended attributes are not copied. Resource/KDF limits for hostile files are not implemented. Treat these as limitations, not guarantees to assume away.
+Clean Save checks the current source identity/hash but does not serialize,
+replace the file or rotate backups. An outstanding post-commit durability
+warning remains dirty and must still be retried.
+
+Production supplies the local Application Support backup root through
+`VaultStore` and the Rust adapter, for both password and cached-key opens.
+`CoreVault.configure_backup_directory` configures only the session; opening
+does not create backups. Direct core callers without a configured root use
+`.keelocker-backups` beside the source. A hash of the canonical path selects the
+vault namespace; no plaintext manifest or credentials are stored.
+The first accepted source is pinned as `original.kdbx`. Recovery generations
+retain the latest 20 versions plus a daily version for 30 days; pruning happens
+after commit and excludes the original and unrecognized files. Backups are
+deduplicated only against the newest generation on the same UTC day; reaccepted
+earlier ciphertext gets a fresh timestamp so rotation preserves the current
+save's source. New generation timestamps advance monotonically across backward
+clock changes. Existing-generation hashing uses the same metadata/streaming
+size bounds as recovery reads. Encrypted byte copies are published without
+replacing existing snapshots, in
+private directories with private file permissions. Save As to a new filename
+preserves its source; later replacements use the destination's own namespace.
+
+There is no multi-writer transaction: a small hash-check/rename race remains.
+Directory-sync failure can report failure after rename, and existing ACLs/extended
+attributes are not copied. Local recovery copies share the host's disk failure
+risk; keep independent backups.
+
+File/key-file reads and library decryption are bounded before expensive work.
+Scoped library limits check imported KDF costs before deriving a key and bound
+decompressed payloads before XML parsing. Exceeding a supported bound rejects
+the file; imported cryptographic parameters are never silently reduced. Apply
+the same bounds on reload and cached-key open. Mutations that cannot be reopened
+within the safety limits must fail before the destination is replaced.
+
+## Recovery copies
+
+Recovery runs through the repository boundary even when password unlock fails.
+The adapter freezes the canonical source identity before the first unlock or
+recovery request, including when the selected path is an alias. It retains that
+identity after failed decryption and ignores later alias retargeting.
+The Rust recovery handle captures the source's namespace identity and the
+configured backup root without reading its plaintext or creating directories.
+Listing accepts only the pinned original and recognized digest-verified
+generations in that namespace; selection tokens bind the chosen bytes.
+Restore validates the selected version with the supplied password/key file
+using the normal bounded KDBX parser. It publishes the exact encrypted bytes
+to a new destination with no-clobber semantics, syncs the file and directory,
+and returns the committed path with a separate durability flag.
+It never replaces the current source or session, clears dirty edits, prunes
+copies or updates the remembered vault path. Existing destinations are conflicts.
+
+The native sheet uses application `VaultBackup`/`VaultRecoveryResult` models.
+The store pauses automatic mutations and refresh while inspecting copies,
+reserves busy state during recovery and rechecks its session after each await.
+Open/Lock/session replacement invalidates late results and native file-dialog
+callbacks. Password input remains ephemeral; it is not logged or persisted.
 
 ## Format preservation
 

@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::{
     config::{CompressionConfig, DatabaseConfig, InnerCipherConfig, KdfConfig, OuterCipherConfig},
     crypt::{self, ciphers::Cipher},
-    db::{Database, DatabaseFormatError, DatabaseOpenError, Value},
+    db::{Database, DatabaseFormatError, DatabaseOpenError, KdbxLimits, Value},
     format::{
         hmac_block_stream,
         kdbx4::{
@@ -30,21 +30,28 @@ pub(crate) fn parse_kdbx4(
     data: &[u8],
     db_key: &DatabaseKey,
 ) -> Result<Database, DatabaseOpenError> {
-    parse_kdbx4_with_key(data, db_key, None)
+    parse_kdbx4_with_key(data, db_key, None, None)
 }
 
 pub(super) fn parse_kdbx4_with_key(
     data: &[u8],
     db_key: &DatabaseKey,
     transformed_key: Option<&[u8]>,
+    limits: Option<&KdbxLimits>,
 ) -> Result<Database, DatabaseOpenError> {
-    let (config, header_attachments, mut inner_decryptor, xml) =
-        decrypt_kdbx4_with_key(data, db_key, transformed_key)?;
+    if limits.is_some_and(|limits| data.len() > limits.max_file_bytes) {
+        return Err(crate::db::ResourceLimitError.into());
+    }
+    let (config, header_attachments, mut inner_decryptor, xml, remaining) =
+        decrypt_kdbx4_with_key(data, db_key, transformed_key, limits)?;
 
-    let mut db = crate::format::xml_db::parse_xml(&xml, &header_attachments, &mut *inner_decryptor)
-        .map_err(|e| {
-            DatabaseOpenError::Format(DatabaseFormatError::Kdbx4(Kdbx4OpenError::Xml(e)))
-        })?;
+    let mut db = crate::format::xml_db::parse_xml_with_limit(
+        &xml,
+        &header_attachments,
+        &mut *inner_decryptor,
+        remaining,
+    )
+    .map_err(|e| DatabaseOpenError::Format(DatabaseFormatError::Kdbx4(Kdbx4OpenError::Xml(e))))?;
 
     db.config = config;
 
@@ -56,16 +63,18 @@ pub(super) fn parse_kdbx4_with_key(
 pub(crate) fn decrypt_kdbx4(
     data: &[u8],
     db_key: &DatabaseKey,
+    limits: Option<&KdbxLimits>,
 ) -> Result<
     (
         DatabaseConfig,
         Vec<Value<Vec<u8>>>,
         Box<dyn Cipher>,
         Vec<u8>,
+        Option<usize>,
     ),
     DatabaseOpenError,
 > {
-    decrypt_kdbx4_with_key(data, db_key, None)
+    decrypt_kdbx4_with_key(data, db_key, None, limits)
 }
 
 #[allow(clippy::type_complexity)]
@@ -73,12 +82,14 @@ fn decrypt_kdbx4_with_key(
     data: &[u8],
     db_key: &DatabaseKey,
     saved_transformed_key: Option<&[u8]>,
+    limits: Option<&KdbxLimits>,
 ) -> Result<
     (
         DatabaseConfig,
         Vec<Value<Vec<u8>>>,
         Box<dyn Cipher>,
         Vec<u8>,
+        Option<usize>,
     ),
     DatabaseOpenError,
 > {
@@ -88,6 +99,11 @@ fn decrypt_kdbx4_with_key(
     let (outer_header, inner_header_start) = parse_outer_header(data).map_err(|e| {
         DatabaseOpenError::Format(DatabaseFormatError::Kdbx4(Kdbx4OpenError::OuterHeader(e)))
     })?;
+    // Header integrity is not an admission policy: reject hostile parameters
+    // even if an attacker replaced the unkeyed header hash too.
+    if let Some(limits) = limits {
+        limits.validate_kdf(&outer_header.kdf_config)?;
+    }
 
     // split file into segments:
     //      header_data         - The outer header data
@@ -167,10 +183,15 @@ fn decrypt_kdbx4_with_key(
         .get_cipher(&master_key, &outer_header.outer_iv)?
         .decrypt(&payload_encrypted)?;
 
-    let payload = outer_header
-        .compression_config
-        .get_compression()
-        .decompress(&payload_compressed)?;
+    let compression = outer_header.compression_config.get_compression();
+    let payload = match limits {
+        Some(limits) => {
+            compression.decompress_limited(&payload_compressed, limits.max_decompressed_bytes)?
+        }
+        None => compression.decompress(&payload_compressed)?,
+    };
+    // Charge the complete inner header (including all attachment bytes) and XML.
+    let remaining = limits.map(|limits| limits.max_decompressed_bytes - payload.len());
 
     // KDBX4 has inner header, too - parse it
     let (header_attachments, inner_header, body_start) =
@@ -197,7 +218,13 @@ fn decrypt_kdbx4_with_key(
         public_custom_data: outer_header.public_custom_data,
     };
 
-    Ok((config, header_attachments, inner_decryptor, xml.to_vec()))
+    Ok((
+        config,
+        header_attachments,
+        inner_decryptor,
+        xml.to_vec(),
+        remaining,
+    ))
 }
 
 fn parse_outer_header(data: &[u8]) -> Result<(KDBX4OuterHeader, usize), Kdbx4OuterHeaderError> {

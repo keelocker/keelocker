@@ -242,6 +242,7 @@ struct StandardVaultIcon: Identifiable, Sendable {
 enum SidebarSelection: Hashable {
     case allItems
     case favorites
+    case recycleBin
     case group(VaultGroup)
 }
 
@@ -254,6 +255,20 @@ struct VaultGroupTreeRow: Identifiable {
 }
 
 enum VaultGroupTree {
+    static func recycleBinGroups(_ id: UUID?, in groups: [VaultGroup]) -> Set<UUID> {
+        // Never classify the entire vault as trash for an imported root reference.
+        guard let id, id.uuidString != "00000000-0000-0000-0000-000000000000",
+              groups.contains(where: { $0.id == id && $0.parentID != nil }) else { return [] }
+        let children = Dictionary(grouping: groups, by: \.parentID)
+        var result: Set<UUID> = []
+        var pending = [id]
+        while let current = pending.popLast() {
+            guard result.insert(current).inserted else { continue }
+            pending.append(contentsOf: (children[current] ?? []).map(\.id))
+        }
+        return result
+    }
+
     static func rows(_ groups: [VaultGroup], collapsed: Set<UUID>) -> [VaultGroupTreeRow] {
         let ids = Set(groups.map(\.id))
         let children = Dictionary(grouping: groups) { group in

@@ -18,18 +18,10 @@ use crate::{
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Meta {
-    #[serde(
-        default,
-        with = "cs_opt_text",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, with = "cs_opt_text", skip_serializing_if = "Option::is_none")]
     generator: Option<String>,
 
-    #[serde(
-        default,
-        with = "cs_opt_text",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, with = "cs_opt_text", skip_serializing_if = "Option::is_none")]
     database_name: Option<String>,
 
     #[serde(
@@ -39,11 +31,7 @@ pub struct Meta {
     )]
     database_name_changed: Option<Timestamp>,
 
-    #[serde(
-        default,
-        with = "cs_opt_text",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, with = "cs_opt_text", skip_serializing_if = "Option::is_none")]
     database_description: Option<String>,
 
     #[serde(
@@ -294,6 +282,7 @@ impl Binary {
     pub(crate) fn xml_to_db(
         self,
         inner_decryptor: &mut dyn crate::crypt::ciphers::Cipher,
+        remaining_payload_bytes: Option<usize>,
     ) -> Result<crate::db::Value<Vec<u8>>, UnprotectError> {
         let mut data = base64_engine::STANDARD.decode(self.value)?;
         let protected = self.protected.unwrap_or(false);
@@ -303,7 +292,12 @@ impl Binary {
         }
 
         if self.compressed.unwrap_or(false) {
-            data = crate::compression::GZipCompression.decompress(&data)?;
+            data = match remaining_payload_bytes {
+                Some(max) => crate::compression::GZipCompression.decompress_limited(&data, max)?,
+                None => crate::compression::GZipCompression.decompress(&data)?,
+            };
+        } else if remaining_payload_bytes.is_some_and(|max| data.len() > max) {
+            return Err(std::io::Error::other(crate::db::ResourceLimitError).into());
         }
 
         let data = if protected {

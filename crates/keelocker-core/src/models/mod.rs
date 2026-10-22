@@ -5,6 +5,8 @@ pub struct CoreVaultInfo {
     pub path: String,
     pub dirty: bool,
     pub root_id: String,
+    pub recycle_bin_id: Option<String>,
+    pub recycle_bin_enabled: bool,
 }
 #[derive(Clone, uniffi::Record)]
 pub struct CoreGroup {

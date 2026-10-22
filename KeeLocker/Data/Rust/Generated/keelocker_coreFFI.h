@@ -268,6 +268,11 @@ uint64_t uniffi_keelocker_core_fn_constructor_corevault_open_with_key_material(R
 RustBuffer uniffi_keelocker_core_fn_method_corevault_attachment(uint64_t ptr, RustBuffer entry, RustBuffer name, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_CONFIGURE_BACKUP_DIRECTORY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_CONFIGURE_BACKUP_DIRECTORY
+void uniffi_keelocker_core_fn_method_corevault_configure_backup_directory(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_CREATE_ENTRY
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_CREATE_ENTRY
 RustBuffer uniffi_keelocker_core_fn_method_corevault_create_entry(uint64_t ptr, RustBuffer group, RustBuffer edit, RustCallStatus *_Nonnull out_status
@@ -286,6 +291,11 @@ void uniffi_keelocker_core_fn_method_corevault_delete_attachment(uint64_t ptr, R
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_DELETE_ENTRY
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_DELETE_ENTRY
 void uniffi_keelocker_core_fn_method_corevault_delete_entry(uint64_t ptr, RustBuffer id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_DELETE_ENTRY_PERMANENTLY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_DELETE_ENTRY_PERMANENTLY
+void uniffi_keelocker_core_fn_method_corevault_delete_entry_permanently(uint64_t ptr, RustBuffer id, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_DELETE_GROUP
@@ -348,6 +358,11 @@ int8_t uniffi_keelocker_core_fn_method_corevault_reload_if_changed(uint64_t ptr,
 void uniffi_keelocker_core_fn_method_corevault_rename_group(uint64_t ptr, RustBuffer id, RustBuffer name, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_RESTORE_ENTRY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_RESTORE_ENTRY
+void uniffi_keelocker_core_fn_method_corevault_restore_entry(uint64_t ptr, RustBuffer id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_SAVE
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_SAVE
 void uniffi_keelocker_core_fn_method_corevault_save(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -366,6 +381,31 @@ RustBuffer uniffi_keelocker_core_fn_method_corevault_snapshot(uint64_t ptr, Rust
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_UPDATE_ENTRY
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_COREVAULT_UPDATE_ENTRY
 void uniffi_keelocker_core_fn_method_corevault_update_entry(uint64_t ptr, RustBuffer id, RustBuffer edit, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_CLONE_CORERECOVERY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_CLONE_CORERECOVERY
+uint64_t uniffi_keelocker_core_fn_clone_corerecovery(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_FREE_CORERECOVERY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_FREE_CORERECOVERY
+void uniffi_keelocker_core_fn_free_corerecovery(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_CONSTRUCTOR_CORERECOVERY_NEW
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_CONSTRUCTOR_CORERECOVERY_NEW
+uint64_t uniffi_keelocker_core_fn_constructor_corerecovery_new(RustBuffer path, RustBuffer backup_directory, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_CORERECOVERY_BACKUPS
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_CORERECOVERY_BACKUPS
+RustBuffer uniffi_keelocker_core_fn_method_corerecovery_backups(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_CORERECOVERY_RESTORE_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_FN_METHOD_CORERECOVERY_RESTORE_BACKUP
+RustBuffer uniffi_keelocker_core_fn_method_corerecovery_restore_backup(uint64_t ptr, RustBuffer id, RustBuffer destination, RustBuffer password, RustBuffer key_file, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_KEELOCKER_CORE_RUSTBUFFER_ALLOC
@@ -634,6 +674,12 @@ uint16_t uniffi_keelocker_core_checksum_method_corevault_attachment(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_CONFIGURE_BACKUP_DIRECTORY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_CONFIGURE_BACKUP_DIRECTORY
+uint16_t uniffi_keelocker_core_checksum_method_corevault_configure_backup_directory(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_CREATE_ENTRY
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_CREATE_ENTRY
 uint16_t uniffi_keelocker_core_checksum_method_corevault_create_entry(void
@@ -655,6 +701,12 @@ uint16_t uniffi_keelocker_core_checksum_method_corevault_delete_attachment(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_DELETE_ENTRY
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_DELETE_ENTRY
 uint16_t uniffi_keelocker_core_checksum_method_corevault_delete_entry(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_DELETE_ENTRY_PERMANENTLY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_DELETE_ENTRY_PERMANENTLY
+uint16_t uniffi_keelocker_core_checksum_method_corevault_delete_entry_permanently(void
     
 );
 #endif
@@ -730,6 +782,12 @@ uint16_t uniffi_keelocker_core_checksum_method_corevault_rename_group(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_RESTORE_ENTRY
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_RESTORE_ENTRY
+uint16_t uniffi_keelocker_core_checksum_method_corevault_restore_entry(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_SAVE
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_COREVAULT_SAVE
 uint16_t uniffi_keelocker_core_checksum_method_corevault_save(void
@@ -754,6 +812,18 @@ uint16_t uniffi_keelocker_core_checksum_method_corevault_update_entry(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_CORERECOVERY_BACKUPS
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_CORERECOVERY_BACKUPS
+uint16_t uniffi_keelocker_core_checksum_method_corerecovery_backups(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_CORERECOVERY_RESTORE_BACKUP
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_METHOD_CORERECOVERY_RESTORE_BACKUP
+uint16_t uniffi_keelocker_core_checksum_method_corerecovery_restore_backup(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_COREVAULT_OPEN
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_COREVAULT_OPEN
 uint16_t uniffi_keelocker_core_checksum_constructor_corevault_open(void
@@ -763,6 +833,12 @@ uint16_t uniffi_keelocker_core_checksum_constructor_corevault_open(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_COREVAULT_OPEN_WITH_KEY_MATERIAL
 #define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_COREVAULT_OPEN_WITH_KEY_MATERIAL
 uint16_t uniffi_keelocker_core_checksum_constructor_corevault_open_with_key_material(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_CORERECOVERY_NEW
+#define UNIFFI_FFIDEF_UNIFFI_KEELOCKER_CORE_CHECKSUM_CONSTRUCTOR_CORERECOVERY_NEW
+uint16_t uniffi_keelocker_core_checksum_constructor_corerecovery_new(void
     
 );
 #endif

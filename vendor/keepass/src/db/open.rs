@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     config::{DatabaseConfig, DatabaseVersion},
     crypt::ciphers::Cipher,
-    db::{Database, Value},
+    db::{Database, KdbxLimits, ResourceLimitError, Value},
     format::{
         kdb::parse_kdb,
         kdbx3::{decrypt_kdbx3, parse_kdbx3},
@@ -20,6 +20,7 @@ pub struct DecryptedKdbx {
     attachments: Vec<Value<Vec<u8>>>,
     inner_decryptor: Box<dyn Cipher>,
     xml: zeroize::Zeroizing<Vec<u8>>,
+    remaining_payload_bytes: Option<usize>,
 }
 
 impl DecryptedKdbx {
@@ -30,10 +31,11 @@ impl DecryptedKdbx {
 
     /// Parse using the already-decrypted payload without deriving the key again.
     pub fn parse(mut self) -> Result<Database, DatabaseOpenError> {
-        let mut db = crate::format::xml_db::parse_xml(
+        let mut db = crate::format::xml_db::parse_xml_with_limit(
             &self.xml,
             &self.attachments,
             &mut *self.inner_decryptor,
+            self.remaining_payload_bytes,
         )
         .map_err(|e| {
             DatabaseOpenError::Format(match self.config.version {
@@ -51,19 +53,42 @@ impl DecryptedKdbx {
 impl Database {
     /// Decrypt a KDBX3/4 payload once for inspection followed by parsing.
     pub fn decrypt(data: &[u8], key: DatabaseKey) -> Result<DecryptedKdbx, DatabaseOpenError> {
-        let (config, attachments, inner_decryptor, xml) = match DatabaseVersion::parse(data)? {
-            DatabaseVersion::KDB3(_) => {
-                let (config, cipher, xml) = decrypt_kdbx3(data, &key)?;
-                (config, Vec::new(), cipher, xml)
-            }
-            DatabaseVersion::KDB4(_) => decrypt_kdbx4(data, &key)?,
-            _ => return Err(DatabaseOpenError::UnsupportedVersion),
-        };
+        Self::decrypt_scoped(data, key, None)
+    }
+
+    /// Decrypt using caller-scoped admission and expansion bounds. The original
+    /// KDF and cipher settings are retained unchanged, including on rejection.
+    pub fn decrypt_with_limits(
+        data: &[u8],
+        key: DatabaseKey,
+        limits: &KdbxLimits,
+    ) -> Result<DecryptedKdbx, DatabaseOpenError> {
+        if data.len() > limits.max_file_bytes {
+            return Err(ResourceLimitError.into());
+        }
+        Self::decrypt_scoped(data, key, Some(limits))
+    }
+
+    fn decrypt_scoped(
+        data: &[u8],
+        key: DatabaseKey,
+        limits: Option<&KdbxLimits>,
+    ) -> Result<DecryptedKdbx, DatabaseOpenError> {
+        let (config, attachments, inner_decryptor, xml, remaining_payload_bytes) =
+            match DatabaseVersion::parse(data)? {
+                DatabaseVersion::KDB3(_) => {
+                    let (config, cipher, xml, remaining) = decrypt_kdbx3(data, &key, limits)?;
+                    (config, Vec::new(), cipher, xml, remaining)
+                }
+                DatabaseVersion::KDB4(_) => decrypt_kdbx4(data, &key, limits)?,
+                _ => return Err(DatabaseOpenError::UnsupportedVersion),
+            };
         Ok(DecryptedKdbx {
             config,
             attachments,
             inner_decryptor,
             xml: zeroize::Zeroizing::new(xml),
+            remaining_payload_bytes,
         })
     }
 
@@ -103,8 +128,8 @@ impl Database {
         let data = match database_version {
             DatabaseVersion::KDB(_) => return Err(DatabaseOpenError::UnsupportedVersion),
             DatabaseVersion::KDB2(_) => return Err(DatabaseOpenError::UnsupportedVersion),
-            DatabaseVersion::KDB3(_) => decrypt_kdbx3(data.as_ref(), &key)?.2,
-            DatabaseVersion::KDB4(_) => decrypt_kdbx4(data.as_ref(), &key)?.3,
+            DatabaseVersion::KDB3(_) => decrypt_kdbx3(data.as_ref(), &key, None)?.2,
+            DatabaseVersion::KDB4(_) => decrypt_kdbx4(data.as_ref(), &key, None)?.3,
         };
 
         Ok(data)
@@ -125,6 +150,9 @@ impl Database {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DatabaseOpenError {
+    /// Caller-scoped resource bounds or supported integer ranges were exceeded.
+    #[error(transparent)]
+    ResourceLimit(#[from] ResourceLimitError),
     /// I/O errors that can occur while reading the database from the source
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -152,6 +180,46 @@ pub enum DatabaseOpenError {
     /// Errors related to parsing the database format
     #[error(transparent)]
     Format(#[from] DatabaseFormatError),
+}
+
+impl DatabaseOpenError {
+    /// Whether scoped admission or expansion bounds rejected this database,
+    /// including separately compressed XML attachments.
+    pub fn is_resource_limit(&self) -> bool {
+        use std::error::Error;
+        fn contains(error: &(dyn Error + 'static)) -> bool {
+            if matches!(
+                error.downcast_ref::<DatabaseOpenError>(),
+                Some(DatabaseOpenError::ResourceLimit(_))
+            ) {
+                return true;
+            }
+            let io = error.downcast_ref::<std::io::Error>().or_else(|| {
+                match error.downcast_ref::<crate::format::xml_db::entry::UnprotectError>() {
+                    Some(crate::format::xml_db::entry::UnprotectError::Io(io)) => Some(io),
+                    _ => None,
+                }
+            });
+            if io
+                .and_then(std::io::Error::get_ref)
+                .is_some_and(|error| error.is::<ResourceLimitError>())
+            {
+                return true;
+            }
+            error.is::<ResourceLimitError>() || error.source().is_some_and(contains)
+        }
+        // Transparent I/O variants can skip io::Error in their source chain.
+        match self {
+            Self::Io(io)
+                if io
+                    .get_ref()
+                    .is_some_and(|error| error.is::<ResourceLimitError>()) =>
+            {
+                true
+            }
+            _ => contains(self),
+        }
+    }
 }
 
 /// Format-specific database parsing errors

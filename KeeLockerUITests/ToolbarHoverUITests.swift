@@ -1,8 +1,117 @@
 import XCTest
 import AppKit
+import Carbon
 
 @MainActor
 final class ToolbarHoverUITests: XCTestCase {
+    func testRecoveryCopyAndRecycleBinNativeFlow() throws {
+        try recoveryCopyAndRecycleBinNativeFlow(appearance: "light")
+    }
+
+    func testRecoveryCopyAndRecycleBinNativeFlowDark() throws {
+        try recoveryCopyAndRecycleBinNativeFlow(appearance: "dark")
+    }
+
+    private func recoveryCopyAndRecycleBinNativeFlow(appearance: String) throws {
+        let previousInput = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        let asciiInput = TISCopyCurrentASCIICapableKeyboardLayoutInputSource().takeRetainedValue()
+        XCTAssertEqual(TISSelectInputSource(asciiInput), noErr)
+        defer { TISSelectInputSource(previousInput) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("native-safety.kdbx")
+        let destination = directory.appendingPathComponent("recovered.kdbx")
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("KeeLockerTests/Fixtures/interop.kdbx")
+        try FileManager.default.copyItem(at: fixture, to: source)
+        let originalBytes = try Data(contentsOf: source)
+        let app = XCUIApplication()
+        app.launchArguments = ["--ignore-last-vault", "--disable-touch-id", "-automaticallyDownloadWebsiteIcons", "NO",
+                               "-appearance", appearance]
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["Open Vault…"].waitForExistence(timeout: 5))
+        app.buttons["Open Vault…"].click()
+        let choose = app.buttons["OKButton"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 3))
+        app.outlines["ListView"].click()
+        app.typeText("/")
+        let path = app.textFields["PathTextField"]
+        XCTAssertTrue(path.waitForExistence(timeout: 3))
+        path.click()
+        path.typeKey("a", modifierFlags: .command)
+        path.typeText(source.path)
+        path.typeKey(.return, modifierFlags: [])
+        choose.click()
+        let password = app.secureTextFields["Master Password"]
+        XCTAssertTrue(password.waitForExistence(timeout: 3))
+        password.typeText("fixture-password")
+        app.buttons["Unlock"].click()
+        XCTAssertTrue(app.buttons["Edit"].waitForExistence(timeout: 15))
+        let entry = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "GitHub тест 🔐,")).firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 3))
+        entry.rightClick()
+        app.windows.menuItems["Delete"].click()
+        let trash = app.dialogs.buttons["Move to Recycle Bin"]
+        XCTAssertTrue(trash.waitForExistence(timeout: 3))
+        trash.click()
+        let bin = app.descendants(matching: .any).matching(identifier: "sidebar.recycleBin").firstMatch
+        XCTAssertTrue(bin.waitForExistence(timeout: 10))
+        bin.click()
+        XCTAssertTrue(entry.waitForExistence(timeout: 3))
+        let beforeCancelledDeletion = try Data(contentsOf: source)
+        entry.rightClick()
+        app.windows.menuItems["Delete Permanently…"].click()
+        XCTAssertTrue(app.dialogs.buttons["Delete Permanently"].waitForExistence(timeout: 3))
+        app.dialogs.buttons["Cancel"].click()
+        XCTAssertEqual(try Data(contentsOf: source), beforeCancelledDeletion)
+        entry.rightClick()
+        XCTAssertTrue(app.menuItems["Restore"].waitForExistence(timeout: 3))
+        app.menuItems["Restore"].click()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "All items,")).firstMatch.click()
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        let restored = try runKeePassXC(["show", "-q", source.path, "Work/Shared/GitHub тест 🔐"])
+        XCTAssertTrue(restored.contains("developer@example.test"))
+
+        app.menuBars.menuBarItems["File"].click()
+        app.menuItems["Recovery Copies…"].click()
+        let original = app.descendants(matching: .any).matching(identifier: "recovery.original").firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 5))
+        original.click()
+        let recoveryPassword = app.secureTextFields["recovery.password"]
+        XCTAssertTrue(recoveryPassword.waitForExistence(timeout: 3))
+        recoveryPassword.click()
+        recoveryPassword.typeText("fixture-password")
+        let normal = XCTAttachment(screenshot: app.screenshot())
+        normal.name = "recovery-copies-\(appearance)-normal"
+        normal.lifetime = .keepAlways
+        add(normal)
+        app.buttons["recovery.restore"].click()
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        XCTAssertTrue(path.waitForExistence(timeout: 3))
+        path.click()
+        app.typeKey("a", modifierFlags: .command)
+        path.typeText(destination.path)
+        app.typeKey(.return, modifierFlags: [])
+        let save = app.buttons["OKButton"]
+        XCTAssertTrue(save.waitForExistence(timeout: 3))
+        save.click()
+        let copied = expectation(for: NSPredicate { _, _ in
+            FileManager.default.fileExists(atPath: destination.path)
+        }, evaluatedWith: nil)
+        wait(for: [copied], timeout: 15)
+        XCTAssertEqual(try Data(contentsOf: destination), originalBytes)
+        XCTAssertNotEqual(try Data(contentsOf: source), originalBytes)
+        XCTAssertTrue(app.buttons["recovery.done"].isHittable)
+        let restoredCopy = XCTAttachment(screenshot: app.screenshot())
+        restoredCopy.name = "recovery-copies-\(appearance)-restored"
+        restoredCopy.lifetime = .keepAlways
+        add(restoredCopy)
+        app.buttons["recovery.done"].click()
+    }
+
     func testWebsiteIconControlsAndSettings() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo-vault", "--ignore-last-vault", "-automaticallyDownloadWebsiteIcons", "NO"]

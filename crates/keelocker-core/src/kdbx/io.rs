@@ -7,6 +7,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(test)]
+#[path = "save_fault_tests.rs"]
+pub(crate) mod save_faults;
+
 pub fn digest(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
@@ -35,13 +39,21 @@ pub fn load(path: &Path, key: &DatabaseKey) -> Result<(Database, [u8; 32]), Core
 }
 
 pub(crate) fn read_canonical(path: &Path) -> Result<Vec<u8>, CoreError> {
-    let file = File::open(path).map_err(|_| CoreError::ReadFailed)?;
-    read_bound_file(path, file).map_err(|_| CoreError::ReadFailed)
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Opening a FIFO must not block before its descriptor can be rejected.
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path).map_err(|_| CoreError::ReadFailed)?;
+    read_bound_file(path, file)
 }
 
 // Resolve the opened descriptor, not the pathname again: a symlink may have
 // changed after canonicalization, including an ABA change before the callback.
-fn read_bound_file(path: &Path, mut file: File) -> std::io::Result<Vec<u8>> {
+fn read_bound_file(path: &Path, mut file: File) -> Result<Vec<u8>, CoreError> {
     let verify = |file: &File| {
         if descriptor_path(file)? == path {
             Ok(())
@@ -49,15 +61,27 @@ fn read_bound_file(path: &Path, mut file: File) -> std::io::Result<Vec<u8>> {
             Err(std::io::Error::other("Opened vault identity changed"))
         }
     };
-    verify(&file)?;
+    verify(&file).map_err(|_| CoreError::ReadFailed)?;
+    // Reject known oversized regular files before allocating their payload.
+    // Keep the streaming bound too: file length can grow after this check.
+    let metadata = file.metadata().map_err(|_| CoreError::ReadFailed)?;
+    if !metadata.is_file() || metadata.len() > super::resource_limits::MAX_FILE_BYTES as u64 {
+        return Err(CoreError::UnsupportedDatabase);
+    }
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    verify(&file)?;
+    (&mut file)
+        .take(super::resource_limits::MAX_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| CoreError::ReadFailed)?;
+    verify(&file).map_err(|_| CoreError::ReadFailed)?;
+    if bytes.len() > super::resource_limits::MAX_FILE_BYTES {
+        return Err(CoreError::UnsupportedDatabase);
+    }
     Ok(bytes)
 }
 
 #[cfg(target_vendor = "apple")]
-fn descriptor_path(file: &File) -> std::io::Result<PathBuf> {
+pub(super) fn descriptor_path(file: &File) -> std::io::Result<PathBuf> {
     use std::{ffi::OsString, os::fd::AsRawFd, os::unix::ffi::OsStringExt};
 
     let mut buffer = [0u8; libc::PATH_MAX as usize];
@@ -74,14 +98,14 @@ fn descriptor_path(file: &File) -> std::io::Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn descriptor_path(file: &File) -> std::io::Result<PathBuf> {
+pub(super) fn descriptor_path(file: &File) -> std::io::Result<PathBuf> {
     use std::os::fd::AsRawFd;
 
     fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
 }
 
 #[cfg(not(any(target_vendor = "apple", target_os = "linux")))]
-fn descriptor_path(_file: &File) -> std::io::Result<PathBuf> {
+pub(super) fn descriptor_path(_file: &File) -> std::io::Result<PathBuf> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "Vault descriptor identity verification requires Apple or Linux support",
@@ -104,22 +128,11 @@ fn load_bytes_checked(bytes: &[u8], key: &DatabaseKey) -> Result<Database, CoreE
     ) {
         return Err(CoreError::UnsupportedDatabase);
     }
-    let decrypted = Database::decrypt(bytes, key.clone()).map_err(|e| {
-        if matches!(version, DatabaseVersion::KDB3(_))
-            && matches!(
-                e,
-                DatabaseOpenError::Cryptography(keepass::error::CryptographyError::InvalidPadding(
-                    _
-                ))
-            )
-        {
-            CoreError::WrongCredentials
-        } else {
-            open_error(e)
-        }
-    })?;
+    let decrypted = super::resource_limits::decrypt(bytes, key.clone())?;
     compatibility::check_xml(decrypted.xml())?;
-    decrypted.parse().map_err(open_error)
+    decrypted
+        .parse()
+        .map_err(super::resource_limits::open_error)
 }
 
 pub fn canonical_destination(path: &Path) -> Result<PathBuf, CoreError> {
@@ -147,6 +160,7 @@ pub fn save(
     path: &Path,
     expected: Option<[u8; 32]>,
     prepared: Option<keepass::db::PreparedKdbx4Save>,
+    backup_root: Option<&Path>,
 ) -> Result<SaveOutcome, CoreError> {
     // The upstream writer emits 4.1; retain cipher/KDF settings when upgrading older files.
     let mut normalized;
@@ -159,49 +173,55 @@ pub fn save(
     };
     let mut bytes = Vec::new();
     let reopened = match prepared {
-        Some(prepared) => prepared.save_and_reopen(db, &mut bytes),
-        None => db.save_and_reopen(&mut bytes, key.clone()),
+        Some(prepared) => {
+            prepared.save_and_reopen_with_limits(db, &mut bytes, &super::resource_limits::LIMITS)
+        }
+        None => {
+            db.save_and_reopen_with_limits(&mut bytes, key.clone(), &super::resource_limits::LIMITS)
+        }
     }
-    .map_err(|_| CoreError::WriteFailed)?;
+    .map_err(|error| {
+        if super::resource_limits::is_resource_limit(&error) {
+            CoreError::UnsupportedDatabase
+        } else {
+            CoreError::WriteFailed
+        }
+    })?;
     if !super::roundtrip::equivalent(db, &reopened) {
         return Err(CoreError::UnsupportedDatabase);
     }
     let parent = path.parent().ok_or(CoreError::WriteFailed)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|_| CoreError::WriteFailed)?;
+    #[cfg(test)]
+    save_faults::checkpoint(save_faults::Stage::TempWrite, temp.path())
+        .map_err(|_| CoreError::WriteFailed)?;
     temp.write_all(&bytes).map_err(|_| CoreError::WriteFailed)?;
+    #[cfg(test)]
+    save_faults::checkpoint(save_faults::Stage::TempSync, temp.path())
+        .map_err(|_| CoreError::WriteFailed)?;
     temp.as_file()
         .sync_all()
         .map_err(|_| CoreError::WriteFailed)?;
-    if let Some(hash) = expected {
-        let original = read_canonical(path).map_err(|_| CoreError::Conflict)?;
-        if fs::symlink_metadata(path)
-            .map_err(|_| CoreError::Conflict)?
-            .file_type()
-            .is_symlink()
-            || digest(&original) != hash
-        {
-            return Err(CoreError::Conflict);
-        }
-        // Keep an encrypted recovery copy. No plaintext is written to disk.
-        let backup = PathBuf::from(format!("{}.bak", path.to_string_lossy()));
-        let mut backup_tmp =
-            tempfile::NamedTempFile::new_in(parent).map_err(|_| CoreError::WriteFailed)?;
-        backup_tmp
-            .write_all(&original)
+    let backups = if let Some(hash) = expected {
+        // Pin only source bytes accepted by the session's identity/hash check.
+        let original = verify_source(path, hash)?;
+        let backups = super::backups::BackupSet::preserve(path, backup_root, &original)?;
+        preserve_legacy_backup(path, parent, &original)?;
+        // External clients do not share our lock. Recheck identity as well as
+        // digest after all mandatory backup writes, immediately before replacing.
+        #[cfg(test)]
+        save_faults::checkpoint(save_faults::Stage::BeforeFinalCheck, path)
             .map_err(|_| CoreError::WriteFailed)?;
-        backup_tmp
-            .as_file()
-            .sync_all()
+        verify_source(path, hash)?;
+        #[cfg(test)]
+        save_faults::checkpoint(save_faults::Stage::BeforeReplace, path)
             .map_err(|_| CoreError::WriteFailed)?;
-        backup_tmp
-            .persist(backup)
-            .map_err(|_| CoreError::WriteFailed)?;
-        // Check again immediately before the replace; external clients do not share our lock.
-        if digest(&read_canonical(path).map_err(|_| CoreError::Conflict)?) != hash {
-            return Err(CoreError::Conflict);
-        }
         temp.persist(path).map_err(|_| CoreError::WriteFailed)?;
+        Some(backups)
     } else {
+        #[cfg(test)]
+        save_faults::checkpoint(save_faults::Stage::BeforeReplace, path)
+            .map_err(|_| CoreError::WriteFailed)?;
         temp.persist_noclobber(path).map_err(|e| {
             if e.error.kind() == std::io::ErrorKind::AlreadyExists {
                 CoreError::Conflict
@@ -209,12 +229,66 @@ pub fn save(
                 CoreError::WriteFailed
             }
         })?;
+        None
+    };
+    #[cfg(test)]
+    let postcommit_ok = save_faults::checkpoint(save_faults::Stage::AfterReplace, path).is_ok();
+    let directory_synced = sync_directory(parent).is_ok();
+    #[cfg(test)]
+    let directory_synced = postcommit_ok && directory_synced;
+    if directory_synced {
+        if let Some(backups) = backups {
+            backups.prune();
+        }
     }
     Ok(SaveOutcome {
         path: path.to_path_buf(),
         hash: digest(&bytes),
-        directory_synced: sync_directory(parent).is_ok(),
+        directory_synced,
     })
+}
+
+/// Also used for a clean Save: preserve external-conflict semantics without
+/// serializing, replacing bytes, rotating .bak or creating any backup namespace.
+pub(crate) fn verify_source(path: &Path, expected: [u8; 32]) -> Result<Vec<u8>, CoreError> {
+    let regular = || {
+        fs::symlink_metadata(path)
+            .map(|metadata| metadata.file_type().is_file())
+            .unwrap_or(false)
+    };
+    if !regular() {
+        return Err(CoreError::Conflict);
+    }
+    let bytes = read_canonical(path).map_err(|_| CoreError::Conflict)?;
+    if !regular() || digest(&bytes) != expected {
+        return Err(CoreError::Conflict);
+    }
+    Ok(bytes)
+}
+
+fn preserve_legacy_backup(path: &Path, parent: &Path, source: &[u8]) -> Result<(), CoreError> {
+    // Keep compatibility with the adjacent .bak without letting a symlink
+    // redirect an encrypted backup write or treating a directory as a file.
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".bak");
+    let backup = PathBuf::from(name);
+    let check = || match fs::symlink_metadata(&backup) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        _ => Err(CoreError::WriteFailed),
+    };
+    check()?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|_| CoreError::WriteFailed)?;
+    temp.write_all(source).map_err(|_| CoreError::WriteFailed)?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|_| CoreError::WriteFailed)?;
+    check()?;
+    temp.persist(&backup).map_err(|_| CoreError::WriteFailed)?;
+    // The backup's directory entry must be durable before the vault replace.
+    File::open(parent)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| CoreError::WriteFailed)
 }
 
 fn sync_directory(parent: &Path) -> std::io::Result<()> {

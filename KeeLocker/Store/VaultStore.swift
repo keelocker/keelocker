@@ -13,6 +13,12 @@ final class VaultStore: ObservableObject {
     }
     @Published var quickUnlockFailure: QuickUnlockFailure?
     @Published private(set) var touchIDAvailable = false
+    @Published var isInspectingBackups = false {
+        didSet {
+            if isInspectingBackups { pauseAutomaticIcons() }
+            else { refreshIfNeeded(); scheduleAutomaticIcons() }
+        }
+    }
     @Published private(set) var canQuickUnlock = false
     private(set) var lastCommandApplied = false
     @Published var hasDraft = false {
@@ -35,12 +41,16 @@ final class VaultStore: ObservableObject {
     @Published private(set) var state: VaultState = .noVault
     @Published private(set) var groups: [VaultGroup] = []
     @Published private(set) var customIcons: [VaultCustomIcon] = []
+    @Published private(set) var recycleBinID: UUID?
+    @Published private(set) var recycleBinEnabled = true
+    private(set) var recycledGroupIDs: Set<UUID> = []
     @Published private(set) var collapsedGroupIDs: Set<UUID> = []
     @Published private(set) var vaultName = "KeeLocker"
     @Published private(set) var fileURL: URL?
     @Published private(set) var capabilities: VaultCapabilities = .readOnly
     private var repository: (any VaultRepository)?
     private let quickUnlock: (any QuickUnlockService)?
+    private let backupDirectory: URL?
     private var quickUnlockRegistration: QuickUnlockRegistration?
     private var unlockTask: Task<Void, Never>?
     private var generation = UUID()
@@ -74,9 +84,11 @@ final class VaultStore: ObservableObject {
     private var failedIconOrigins: Set<URL> = []
 
     init(preferences: UserDefaults? = nil, quickUnlock: (any QuickUnlockService)? = nil,
+         backupDirectory: URL? = nil,
          websiteIconLoader: @escaping FaviconDownloader.Loader = { try await FaviconDownloader().download($0) }) {
         self.preferences = preferences
         self.quickUnlock = quickUnlock
+        self.backupDirectory = backupDirectory
         self.websiteIconLoader = websiteIconLoader
         if let path = preferences?.string(forKey: "lastVaultPath"), !path.isEmpty {
             openFile(URL(fileURLWithPath: path))
@@ -87,6 +99,7 @@ final class VaultStore: ObservableObject {
 
     init(items: [VaultItem]) {
         quickUnlock = nil
+        backupDirectory = nil
         websiteIconLoader = { try await FaviconDownloader().download($0) }
         let memory = MemoryVaultRepository(items: items)
         repository = memory
@@ -97,8 +110,31 @@ final class VaultStore: ObservableObject {
     var isLocked: Bool { state != .unlocked }
     var sessionID: UUID { generation }
     var requiresPassword: Bool { repository?.requiresPassword ?? false }
+    var supportsRecovery: Bool { repository?.supportsRecovery == true && fileURL != nil }
     var canEnableTouchID: Bool { repository?.supportsQuickUnlock == true && fileURL != nil && touchIDAvailable }
+    var ordinaryGroups: [VaultGroup] { groups.filter { !recycledGroupIDs.contains($0.id) } }
+    var activeItems: [VaultItem] { items.filter { !recycledGroupIDs.contains($0.group.id) } }
+    var activeItemCount: Int { activeItems.count }
+    var recycleBinCount: Int { items.count - activeItemCount }
+    var canCreateInCurrentScope: Bool {
+        guard !isLocked, !isBusy, !hasDraft, capabilities.canCreate else { return false }
+        switch sidebarSelection {
+        case .recycleBin: return false
+        case .group(let group): return !recycledGroupIDs.contains(group.id)
+        default: return true
+        }
+    }
+
+    func isInRecycleBin(id: UUID) -> Bool {
+        items.contains { $0.id == id && recycledGroupIDs.contains($0.group.id) }
+    }
+
+    func canEditEntry(id: UUID) -> Bool {
+        !isLocked && capabilities.canEdit && items.contains { $0.id == id } && !isInRecycleBin(id: id)
+    }
+
     var groupCreationParent: VaultGroup? {
+        guard canCreateInCurrentScope else { return nil }
         guard let root = rootGroupCreationParent else { return nil }
         if case let .group(selected) = sidebarSelection {
             return groups.first { $0.id == selected.id }
@@ -110,7 +146,7 @@ final class VaultStore: ObservableObject {
         return groups.first { $0.parentID == nil }
     }
     var visibleGroupRows: [VaultGroupTreeRow] {
-        VaultGroupTree.rows(groups, collapsed: collapsedGroupIDs)
+        VaultGroupTree.rows(ordinaryGroups, collapsed: collapsedGroupIDs)
     }
     var failure: VaultFailure? {
         if case let .error(failure) = state { return failure }
@@ -118,7 +154,7 @@ final class VaultStore: ObservableObject {
     }
 
     func openFile(_ url: URL) {
-        use(RustVaultRepository(url: url), fileURL: url)
+        use(RustVaultRepository(url: url, backupDirectory: backupDirectory), fileURL: url)
         preferences?.set(url.path, forKey: "lastVaultPath")
     }
 
@@ -141,11 +177,13 @@ final class VaultStore: ObservableObject {
 
         switch sidebarSelection {
         case .allItems:
-            scopedItems = items
+            scopedItems = activeItems
         case .favorites:
-            scopedItems = items.filter(\.isFavorite)
+            scopedItems = activeItems.filter(\.isFavorite)
+        case .recycleBin:
+            scopedItems = items.filter { recycledGroupIDs.contains($0.group.id) }
         case let .group(group):
-            scopedItems = items.filter { $0.group == group }
+            scopedItems = activeItems.filter { $0.group.id == group.id }
         }
 
         let trimmedQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -167,20 +205,22 @@ final class VaultStore: ObservableObject {
         switch sidebarSelection {
         case .allItems: "All items"
         case .favorites: "Favorites"
+        case .recycleBin: "Recycle Bin"
         case let .group(group): group.rawValue
         }
     }
 
     var favoriteCount: Int {
-        items.filter(\.isFavorite).count
+        activeItems.filter(\.isFavorite).count
     }
 
     func count(in group: VaultGroup) -> Int {
-        items.filter { $0.group == group }.count
+        activeItems.filter { $0.group.id == group.id }.count
     }
 
     func navigate(to destination: SidebarSelection) {
         if case let .group(group) = destination {
+            guard !recycledGroupIDs.contains(group.id) else { return }
             collapsedGroupIDs.subtract(VaultGroupTree.ancestors(of: group.id, in: groups))
         }
         sidebarSelection = destination
@@ -206,7 +246,7 @@ final class VaultStore: ObservableObject {
     }
 
     func updateItem(_ item: VaultItem) {
-        guard capabilities.canEdit, !item.isRedacted else { return }
+        guard canEditEntry(id: item.id), !item.isRedacted else { return }
         run(.updateEntry(item))
     }
 
@@ -214,7 +254,7 @@ final class VaultStore: ObservableObject {
         guard !isLocked, !isBusy, !item.isRedacted else { return false }
         let creating = newItemDraft?.id == item.id
         guard newItemDraft == nil || creating,
-              creating ? capabilities.canCreate : capabilities.canEdit else { return false }
+              creating ? capabilities.canCreate : canEditEntry(id: item.id) else { return false }
         let request = generation
         run(creating ? .createEntry(item) : .updateEntry(item), selectNew: creating)
         await waitForOperation()
@@ -281,6 +321,7 @@ final class VaultStore: ObservableObject {
         isDirty = false
         hasDraft = false
         inspectedEntryID = nil
+        isInspectingBackups = false
         operationFailure = nil
         quickUnlockFailure = nil
         lastCommandApplied = false
@@ -288,6 +329,9 @@ final class VaultStore: ObservableObject {
         newItemDraft = nil
         selectionBeforeNewItem = nil
         groups = []
+        recycleBinID = nil
+        recycleBinEnabled = true
+        recycledGroupIDs = []
         customIcons = []
         collapsedGroupIDs = []
         selectedItemID = nil
@@ -317,7 +361,7 @@ final class VaultStore: ObservableObject {
     }
 
     func unlock(password: String = "", keyFile: URL? = nil) {
-        guard isLocked, state != .unlocking, let repository else { return }
+        guard isLocked, !isBusy, state != .unlocking, let repository else { return }
         let request = UUID()
         generation = request
         state = .unlocking
@@ -359,7 +403,7 @@ final class VaultStore: ObservableObject {
 
     func unlockWithTouchID() {
         refreshQuickUnlockAvailability()
-        guard isLocked, state != .unlocking, canQuickUnlock,
+        guard isLocked, !isBusy, state != .unlocking, canQuickUnlock,
               let repository, let quickUnlock, let url = fileURL,
               let registration = quickUnlock.registration(for: url) else { return }
         let request = UUID()
@@ -405,6 +449,11 @@ final class VaultStore: ObservableObject {
     func run(_ command: VaultCommand, selectNew: Bool = false, session: UUID? = nil) {
         guard session == nil || session == generation,
               !isLocked, !isBusy, let repository else { return }
+        guard allows(command) else {
+            lastCommandApplied = false
+            operationFailure = .invalidOperation
+            return
+        }
         let request = generation
         let oldIDs = Set(items.map(\.id))
         let oldGroupIDs = Set(groups.map(\.id))
@@ -455,11 +504,65 @@ final class VaultStore: ObservableObject {
         }
     }
 
+    private func allows(_ command: VaultCommand) -> Bool {
+        func writableGroup(_ id: UUID) -> Bool {
+            ordinaryGroups.contains { $0.id == id }
+        }
+        switch command {
+        case .createEntry(let entry):
+            return capabilities.canCreate && !entry.isRedacted && writableGroup(entry.group.id)
+        case .updateEntry(let entry):
+            return canEditEntry(id: entry.id) && !entry.isRedacted && writableGroup(entry.group.id)
+        case .deleteEntry(let id):
+            return capabilities.canDelete && canEditEntry(id: id)
+        case .restoreEntry(let id):
+            return capabilities.canEdit && isInRecycleBin(id: id)
+        case .deleteEntryPermanently(let id):
+            return capabilities.canDelete && isInRecycleBin(id: id)
+        case .moveEntry(let id, let destination):
+            return canEditEntry(id: id) && writableGroup(destination)
+        case .createGroup(let parent, _):
+            return capabilities.canCreate && writableGroup(parent)
+        case .renameGroup(let id, _), .deleteGroup(let id):
+            return capabilities.canEdit && writableGroup(id)
+        case .moveGroup(let id, let destination):
+            return capabilities.canEdit && writableGroup(id) && writableGroup(destination)
+        case .putAttachment(let id, _, _), .deleteAttachment(let id, _):
+            return canEditEntry(id: id)
+        case .save, .saveAs, .reload:
+            return true
+        }
+    }
+
     func waitForOperation() async {
         await operationTask?.value
         await waitForRefresh()
     }
     func waitForSelection() async { await selectionTask?.value }
+
+    func backups() async throws -> [VaultBackup] {
+        guard supportsRecovery, !isBusy, !hasDraft, let repository else { throw VaultFailure.invalidOperation }
+        let request = generation
+        let result = try await repository.backups()
+        guard !Task.isCancelled, request == generation else { throw CancellationError() }
+        return result
+    }
+
+    func restoreBackup(_ backup: VaultBackup, to destination: URL, password: String, keyFile: URL?) async throws -> VaultRecoveryResult {
+        guard supportsRecovery, !isBusy, !hasDraft, let repository else { throw VaultFailure.invalidOperation }
+        let request = generation
+        isBusy = true
+        defer {
+            if request == generation {
+                isBusy = false
+                refreshIfNeeded()
+                scheduleAutomaticIcons()
+            }
+        }
+        let result = try await repository.restoreBackup(backup, to: destination, password: password, keyFile: keyFile)
+        guard !Task.isCancelled, request == generation else { throw CancellationError() }
+        return result
+    }
 
     func refreshFromDisk() {
         guard !isLocked, repository != nil else { return }
@@ -468,7 +571,7 @@ final class VaultStore: ObservableObject {
     }
 
     private func refreshIfNeeded() {
-        guard refreshPending, !isLocked, !isBusy, !isDirty, !hasDraft, inspectedEntryID == nil,
+        guard refreshPending, !isLocked, !isBusy, !isDirty, !hasDraft, !isInspectingBackups, inspectedEntryID == nil,
               let repository else { return }
         refreshPending = false
         isBusy = true
@@ -555,6 +658,9 @@ final class VaultStore: ObservableObject {
         snapshotRevision = UUID()
         vaultName = vault.name
         groups = vault.groups
+        recycledGroupIDs = vault.recycledGroupIDs
+        recycleBinID = vault.recycleBinID.flatMap { recycledGroupIDs.contains($0) ? $0 : nil }
+        recycleBinEnabled = vault.recycleBinEnabled
         customIcons = vault.customIcons
         collapsedGroupIDs.formIntersection(Set(vault.groups.map(\.id)))
         items = vault.entries
@@ -575,7 +681,8 @@ final class VaultStore: ObservableObject {
             refreshPending = true
         }
         if case .group(let old) = sidebarSelection {
-            sidebarSelection = vault.groups.first(where: { $0.id == old.id }).map(SidebarSelection.group) ?? .allItems
+            if recycledGroupIDs.contains(old.id) { sidebarSelection = .recycleBin }
+            else { sidebarSelection = ordinaryGroups.first(where: { $0.id == old.id }).map(SidebarSelection.group) ?? .allItems }
             if case let .group(selected) = sidebarSelection {
                 collapsedGroupIDs.subtract(VaultGroupTree.ancestors(of: selected.id, in: groups))
             }
@@ -606,7 +713,7 @@ final class VaultStore: ObservableObject {
 
     private var canDownloadAutomaticIcons: Bool {
         automaticallyDownloadsIcons && !isLocked && capabilities.canEdit && !isBusy && !isDirty
-            && !hasDraft && inspectedEntryID == nil && !refreshPending && operationFailure == nil
+            && !hasDraft && !isInspectingBackups && inspectedEntryID == nil && !refreshPending && operationFailure == nil
     }
 
     private func scheduleAutomaticIcons() {
@@ -614,7 +721,7 @@ final class VaultStore: ObservableObject {
         if automaticIconCandidatesRevision != snapshotRevision {
             automaticIconCandidatesRevision = snapshotRevision
             iconAttempts.removeAll()
-            automaticIconCandidates = items.compactMap { item in
+            automaticIconCandidates = activeItems.compactMap { item in
                 guard item.needsWebsiteIcon, let origin = FaviconDownloader.origin(for: item.website),
                       !failedIconOrigins.contains(origin) else { return nil }
                 return AutomaticIconCandidate(item: item, origin: origin)
@@ -686,6 +793,7 @@ final class VaultStore: ObservableObject {
                 }
                 guard !Task.isCancelled, self.automaticIconGeneration == request,
                       self.canDownloadAutomaticIcons, self.snapshotRevision == revision,
+                      !self.isInRecycleBin(id: current.id), !self.recycledGroupIDs.contains(current.group.id),
                       current.website == item.website, current.needsWebsiteIcon, !current.isRedacted else {
                     retryWhenIdle = !self.canDownloadAutomaticIcons
                     self.refreshIfNeeded()

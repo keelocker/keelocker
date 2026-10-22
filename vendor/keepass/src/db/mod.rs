@@ -47,6 +47,7 @@
 //! ```
 pub mod fields;
 
+mod limits;
 mod open;
 mod types;
 
@@ -65,6 +66,7 @@ pub use crate::db::save::DatabaseSaveError;
 pub use crate::format::kdbx4::PreparedKdbx4Save;
 
 pub use crate::db::{
+    limits::{KdbxLimits, ResourceLimitError},
     open::{DatabaseFormatError, DatabaseOpenError, DecryptedKdbx},
     types::*,
 };

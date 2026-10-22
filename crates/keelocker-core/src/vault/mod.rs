@@ -1,5 +1,7 @@
+pub mod recovery;
+
 use crate::{
-    kdbx::{io, mapping},
+    kdbx::{backups, io, mapping},
     models::*,
     CoreError,
 };
@@ -8,12 +10,13 @@ use keepass::{
     Database, DatabaseKey,
 };
 use std::{
-    fs::File,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
+
+mod recycle_bin;
 
 struct Session {
     db: Database,
@@ -21,6 +24,7 @@ struct Session {
     path: PathBuf,
     hash: [u8; 32],
     dirty: bool,
+    backup_root: Option<PathBuf>,
     next_save: Option<std::thread::JoinHandle<Result<keepass::db::PreparedKdbx4Save, CoreError>>>,
 }
 
@@ -61,13 +65,24 @@ impl Session {
     }
 
     fn save_to(&mut self, path: &Path, expected: Option<[u8; 32]>) -> Result<(), CoreError> {
+        if !self.dirty && expected == Some(self.hash) && path == self.path {
+            return io::verify_source(path, self.hash).map(|_| ());
+        }
         let prepared = self
             .next_save
             .take()
             .map(|task| task.join().map_err(|_| CoreError::WriteFailed)?)
             .transpose();
-        let result =
-            prepared.and_then(|prepared| io::save(&self.db, &self.key, path, expected, prepared));
+        let result = prepared.and_then(|prepared| {
+            io::save(
+                &self.db,
+                &self.key,
+                path,
+                expected,
+                prepared,
+                self.backup_root.as_deref(),
+            )
+        });
         self.prepare_next_save();
         let outcome = result?;
         self.path = outcome.path;
@@ -109,6 +124,7 @@ impl CoreVault {
             path,
             hash,
             dirty: false,
+            backup_root: None,
             next_save: None,
         };
         session.prepare_next_save();
@@ -138,16 +154,7 @@ impl CoreVault {
         key_file: Option<String>,
     ) -> Result<Arc<Self>, CoreError> {
         let password = Zeroizing::new(password);
-        let mut key = if password.is_empty() && key_file.is_some() {
-            DatabaseKey::new()
-        } else {
-            DatabaseKey::new().with_password(&password)
-        };
-        if let Some(file) = key_file {
-            key = key
-                .with_keyfile(&mut File::open(file).map_err(|_| CoreError::ReadFailed)?)
-                .map_err(|_| CoreError::ReadFailed)?;
-        }
+        let key = recovery::credentials(&password, key_file)?;
         Self::open_key(path, key)
     }
 
@@ -227,6 +234,8 @@ impl CoreVault {
                     path: s.path.to_string_lossy().into(),
                     dirty: s.dirty,
                     root_id: s.db.root().id().to_string(),
+                    recycle_bin_id: recycle_bin::id(&s.db).map(|id| id.to_string()),
+                    recycle_bin_enabled: s.db.meta.recyclebin_enabled.unwrap_or(true),
                 },
                 groups: mapping::groups(&s.db),
                 entries: s
@@ -300,6 +309,7 @@ impl CoreVault {
         validate_edit(&edit)?;
         self.with(|s| {
             validate_icon(&s.db, &edit.icon)?;
+            recycle_bin::writable_group(&s.db, group_id(&group)?)?;
             let id =
                 s.db.group_mut(group_id(&group)?)
                     .ok_or(CoreError::InvalidOperation)?
@@ -314,6 +324,7 @@ impl CoreVault {
     pub fn update_entry(&self, id: String, edit: CoreEntryEdit) -> Result<(), CoreError> {
         validate_edit(&edit)?;
         self.with(|s| {
+            recycle_bin::writable_entry(&s.db, entry_id(&id)?)?;
             validate_icon(&s.db, &edit.icon)?;
             apply_edit(&mut s.db, entry_id(&id)?, edit)?;
             s.dirty = true;
@@ -322,20 +333,22 @@ impl CoreVault {
     }
 
     pub fn delete_entry(&self, id: String) -> Result<(), CoreError> {
-        self.with(|s| {
-            s.db.entry_mut(entry_id(&id)?)
-                .ok_or(CoreError::InvalidOperation)?
-                .track_changes()
-                .remove();
-            s.dirty = true;
-            Ok(())
-        })
+        self.with(|s| recycle_bin::delete(s, entry_id(&id)?))
+    }
+
+    pub fn restore_entry(&self, id: String) -> Result<(), CoreError> {
+        self.with(|s| recycle_bin::restore(s, entry_id(&id)?))
+    }
+
+    pub fn delete_entry_permanently(&self, id: String) -> Result<(), CoreError> {
+        self.with(|s| recycle_bin::delete_permanently(s, entry_id(&id)?))
     }
 
     pub fn move_entry(&self, id: String, destination: String) -> Result<(), CoreError> {
         self.with(|s| {
             let destination = group_id(&destination)?;
-            s.db.group(destination).ok_or(CoreError::InvalidOperation)?;
+            recycle_bin::writable_group(&s.db, destination)?;
+            recycle_bin::writable_entry(&s.db, entry_id(&id)?)?;
             s.db.entry_mut(entry_id(&id)?)
                 .ok_or(CoreError::InvalidOperation)?
                 .track_changes()
@@ -351,6 +364,7 @@ impl CoreVault {
             return Err(CoreError::InvalidOperation);
         }
         self.with(|s| {
+            recycle_bin::writable_group(&s.db, group_id(&parent)?)?;
             let mut parent =
                 s.db.group_mut(group_id(&parent)?)
                     .ok_or(CoreError::InvalidOperation)?;
@@ -367,6 +381,7 @@ impl CoreVault {
             return Err(CoreError::InvalidOperation);
         }
         self.with(|s| {
+            recycle_bin::writable_group(&s.db, group_id(&id)?)?;
             let mut g =
                 s.db.group_mut(group_id(&id)?)
                     .ok_or(CoreError::InvalidOperation)?;
@@ -379,6 +394,8 @@ impl CoreVault {
 
     pub fn move_group(&self, id: String, destination: String) -> Result<(), CoreError> {
         self.with(|s| {
+            recycle_bin::writable_group(&s.db, group_id(&id)?)?;
+            recycle_bin::writable_group(&s.db, group_id(&destination)?)?;
             s.db.group_mut(group_id(&id)?)
                 .ok_or(CoreError::InvalidOperation)?
                 .track_changes()
@@ -392,6 +409,7 @@ impl CoreVault {
     pub fn delete_group(&self, id: String) -> Result<(), CoreError> {
         self.with(|s| {
             let id = group_id(&id)?;
+            recycle_bin::writable_group(&s.db, id)?;
             let g = s.db.group(id).ok_or(CoreError::InvalidOperation)?;
             // Avoid accidental recursive destruction. Move/delete children explicitly.
             if g.parent().is_none() || g.groups().next().is_some() || g.entries().next().is_some() {
@@ -430,6 +448,7 @@ impl CoreVault {
             return Err(CoreError::InvalidOperation);
         }
         self.with(|s| {
+            recycle_bin::writable_entry(&s.db, entry_id(&entry)?)?;
             let mut e =
                 s.db.entry_mut(entry_id(&entry)?)
                     .ok_or(CoreError::InvalidOperation)?;
@@ -444,6 +463,7 @@ impl CoreVault {
 
     pub fn delete_attachment(&self, entry: String, name: String) -> Result<(), CoreError> {
         self.with(|s| {
+            recycle_bin::writable_entry(&s.db, entry_id(&entry)?)?;
             let mut e =
                 s.db.entry_mut(entry_id(&entry)?)
                     .ok_or(CoreError::InvalidOperation)?;
@@ -468,6 +488,14 @@ impl CoreVault {
                 .filter_map(|i| e.historical(i))
                 .map(|h| mapping::entry_in_group(h, true, e.parent().id().to_string()))
                 .collect())
+        })
+    }
+
+    /// Session-only root; owned directories are created privately on the first dirty save.
+    pub fn configure_backup_directory(&self, path: String) -> Result<(), CoreError> {
+        self.with(|s| {
+            s.backup_root = Some(backups::configured_root(Path::new(&path))?);
+            Ok(())
         })
     }
 
@@ -670,7 +698,7 @@ mod persistence_recovery_tests {
             .add_entry()
             .set_unprotected("Title", "original");
         db.save(
-            &mut File::create(path).unwrap(),
+            &mut std::fs::File::create(path).unwrap(),
             DatabaseKey::new().with_password(PASSWORD),
         )
         .unwrap();

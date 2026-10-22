@@ -3,6 +3,21 @@ use thiserror::Error;
 use crate::{config::DatabaseVersion, db::Database, DatabaseKey};
 
 impl Database {
+    /// Save with scoped admission/expansion bounds and authenticate the new
+    /// bytes using the same freshly derived key, without a second KDF.
+    pub fn save_and_reopen_with_limits(
+        &self,
+        destination: &mut dyn std::io::Write,
+        key: DatabaseKey,
+        limits: &crate::db::KdbxLimits,
+    ) -> Result<Database, DatabaseSaveError> {
+        limits
+            .validate_kdf(&self.config.kdf_config)
+            .map_err(|e| DatabaseSaveError::Validation(e.into()))?;
+        crate::db::PreparedKdbx4Save::new(self.config.kdf_config.clone(), key)?
+            .save_and_reopen_with_limits(self, destination, limits)
+    }
+
     /// Saves and reopens newly generated KDBX4 bytes for round-trip validation.
     /// Reuses the transformed key only within this call; salts and IVs are fresh.
     /// Callers must still compare the returned database with their source model.

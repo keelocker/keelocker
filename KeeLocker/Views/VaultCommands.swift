@@ -63,14 +63,45 @@ enum VaultDialogs {
     }
 
     static func delete(_ store: VaultStore, command: VaultCommand) {
+        guard !store.isLocked, !store.isBusy, !store.hasDraft, store.capabilities.canDelete else { return }
+        let session = store.sessionID
+        let revision = store.snapshotRevision
+        let permanent: Bool
+        let entryDeletion: Bool
+        switch command {
+        case .deleteEntry(let id):
+            guard store.canEditEntry(id: id) else { return }
+            permanent = !store.recycleBinEnabled
+            entryDeletion = true
+        case .deleteEntryPermanently(let id):
+            guard store.isInRecycleBin(id: id) else { return }
+            permanent = true
+            entryDeletion = true
+        case .deleteGroup:
+            permanent = true
+            entryDeletion = false
+        default: return
+        }
         let alert = NSAlert()
-        alert.messageText = "Delete the selected item?"
-        alert.informativeText = store.fileURL == nil
-            ? "This will delete the selected item. Groups must be empty."
-            : "This will delete the selected item and save the vault file immediately. Groups must be empty."
+        alert.messageText = entryDeletion
+            ? (permanent ? "Delete this entry permanently?" : "Move this entry to Recycle Bin?")
+            : "Delete this empty group?"
+        if entryDeletion {
+            alert.informativeText = permanent
+                ? "The entry and its history will be permanently deleted. This cannot be undone."
+                : "You can restore the entry and its history from Recycle Bin."
+            if permanent, !store.recycleBinEnabled {
+                alert.informativeText = "Recycle Bin is disabled for this vault. " + alert.informativeText
+            }
+        } else {
+            alert.informativeText = "Groups must be empty. This cannot be undone."
+        }
+        if store.fileURL != nil { alert.informativeText += " The vault file will be saved immediately." }
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Delete")
-        if alert.runModal() == .alertSecondButtonReturn { store.run(command) }
+        alert.addButton(withTitle: entryDeletion ? (permanent ? "Delete Permanently" : "Move to Recycle Bin") : "Delete")
+        if alert.runModal() == .alertSecondButtonReturn, revision == store.snapshotRevision {
+            store.run(command, session: session)
+        }
     }
 }
 
@@ -80,15 +111,28 @@ struct EntryCommands: View {
     var body: some View {
         Button("Attachments & History…") { store.inspectedEntryID = item.id }
             .disabled(!store.capabilities.canSave || store.isBusy || store.hasDraft)
-        Menu("Move to Group") {
-            ForEach(store.groups) { group in
-                Button(group.path) { store.run(.moveEntry(item.id, group.id)) }
-                    .disabled(group.id == item.group.id)
+        if store.isInRecycleBin(id: item.id) {
+            Button("Restore") { store.run(.restoreEntry(item.id)) }
+                .disabled(!store.capabilities.canEdit || store.isBusy || store.hasDraft)
+                .accessibilityIdentifier("entry.restore")
+            Button("Delete Permanently…", role: .destructive) {
+                VaultDialogs.delete(store, command: .deleteEntryPermanently(item.id))
             }
-        }
-        .disabled(!store.capabilities.canEdit || store.isBusy || store.hasDraft)
-        Button("Delete", role: .destructive) { VaultDialogs.delete(store, command: .deleteEntry(item.id)) }
             .disabled(!store.capabilities.canDelete || store.isBusy || store.hasDraft)
+            .accessibilityIdentifier("entry.deletePermanently")
+        } else {
+            Menu("Move to Group") {
+                ForEach(store.ordinaryGroups) { group in
+                    Button(group.path) { store.run(.moveEntry(item.id, group.id)) }
+                        .disabled(group.id == item.group.id)
+                }
+            }
+            .disabled(!store.canEditEntry(id: item.id) || store.isBusy || store.hasDraft)
+            Button(store.recycleBinEnabled ? "Delete" : "Delete Permanently…", role: .destructive) {
+                VaultDialogs.delete(store, command: .deleteEntry(item.id))
+            }
+            .disabled(!store.capabilities.canDelete || store.isBusy || store.hasDraft)
+        }
     }
 }
 
@@ -114,9 +158,11 @@ struct EntryFilesAndHistory: View {
                     Spacer()
                     Button("Save…") { export(attachment.name) }
                     Button("Delete", role: .destructive) { store.run(.deleteAttachment(id, attachment.name)) }
+                        .disabled(!store.canEditEntry(id: id))
                 }
             }
             Button("Add Attachment…", action: add)
+                .disabled(!store.canEditEntry(id: id))
             Divider()
             Text("Entry History").fontWeight(.medium)
             if versions.isEmpty { Text("No previous versions").foregroundStyle(.secondary) }
@@ -209,7 +255,7 @@ struct GroupCommands: View {
             Button("New Group…") { VaultDialogs.group(store, parent: group) }
             Button("Rename Group…") { VaultDialogs.group(store, parent: group, rename: true) }
             Menu("Move to Group") {
-                ForEach(store.groups.filter { $0.id != group.id }) { destination in
+                ForEach(store.ordinaryGroups.filter { $0.id != group.id }) { destination in
                     Button(destination.path) { store.run(.moveGroup(group.id, destination.id)) }
                 }
             }
@@ -217,7 +263,7 @@ struct GroupCommands: View {
             Button("Delete Group", role: .destructive) { VaultDialogs.delete(store, command: .deleteGroup(group.id)) }
                 .disabled(group.parentID == nil)
         }
-        .disabled(!store.capabilities.canEdit || store.isBusy || store.hasDraft)
+        .disabled(!store.capabilities.canEdit || store.isBusy || store.hasDraft || !store.ordinaryGroups.contains { $0.id == group.id })
     }
 }
 
