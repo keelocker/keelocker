@@ -1,37 +1,34 @@
 #!/bin/bash
-# Run from any directory. Never uploads, reads signing secrets, or publishes.
+# Run from any directory. Produces the unsigned DMG used by GitHub Releases.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 MODE="${1:-help}"
 LABEL="${KEELOCKER_RELEASE_LABEL:-0.1.0-beta.1}"
-ARCHS="${KEELOCKER_RELEASE_ARCHS:-arm64}"
-IDENTITY="${KEELOCKER_SIGN_IDENTITY:-}"
+ARCHS="${KEELOCKER_RELEASE_ARCHS:-arm64 x86_64}"
 OUTPUT="${KEELOCKER_RELEASE_OUTPUT:-}"
 BUILD_NUMBER="${KEELOCKER_BUILD_NUMBER:-2}"
 
 die() { echo "release: $*" >&2; exit 1; }
 usage() {
     cat <<'EOF'
-Usage: bash scripts/release.sh preflight|build|package APP|package-notarized APP
+Usage: bash scripts/release.sh preflight|build|package APP
 Environment:
   KEELOCKER_RELEASE_OUTPUT    New absolute output directory (required except preflight)
-  KEELOCKER_RELEASE_ARCHS     arm64 (default), x86_64, or "arm64 x86_64"
+  KEELOCKER_RELEASE_ARCHS     "arm64 x86_64" (default), arm64, or x86_64
   KEELOCKER_RELEASE_LABEL     0.1.0-beta.1 (default), used for archive names
   KEELOCKER_BUILD_NUMBER      2 (default), numeric CFBundleVersion
-  KEELOCKER_SIGN_IDENTITY     Full "Developer ID Application: ..." name (optional)
 build invokes Release xcodebuild, then packages. package copies an existing Release app.
-Without an identity these modes create LOCAL-NON-DISTRIBUTABLE ad-hoc artifacts.
-With an identity they create SIGNED-UNNOTARIZED artifacts for notarytool submission.
-package-notarized copies an already stapled app, verifies it, and makes the final ZIP.
-See docs/release.md. No automatic notarization or publication occurs.
+Creates a compressed DMG containing KeeLocker.app and an Applications shortcut,
+plus SHA256SUMS.txt. No Developer ID certificate or notarization is required.
+See docs/release.md for installation. This script never uploads or publishes.
 EOF
 }
 
 case "$MODE" in
     help|-h|--help) usage; exit 0 ;;
-    preflight|build|package|package-notarized) ;;
+    preflight|build|package) ;;
     *) usage; exit 1 ;;
 esac
 [[ "$LABEL" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || die "Invalid release label"
@@ -41,11 +38,8 @@ case "$ARCHS" in
     arm64|x86_64|"arm64 x86_64") ;;
     *) die 'Architectures must be arm64, x86_64, or "arm64 x86_64"' ;;
 esac
-if [[ -n "$IDENTITY" && "$IDENTITY" != "Developer ID Application: "* ]]; then
-    die "Supply a Developer ID Application identity, or leave it unset for local use"
-fi
 [[ "$(uname -s)" == Darwin ]] || die "macOS required"
-for tool in xcodebuild xcrun cargo rustc rustup codesign security ditto lipo otool vtool plutil shasum file cmp git python3 spctl; do
+for tool in xcodebuild cargo rustc rustup codesign ditto lipo otool vtool plutil shasum file cmp git python3 hdiutil; do
     command -v "$tool" >/dev/null || die "Missing tool: $tool"
 done
 
@@ -57,11 +51,8 @@ if [[ "$MODE" == preflight ]]; then
     rustc --version
     cargo --version
     rustup target list --installed
-    security find-identity -v -p codesigning
-    xcrun notarytool --version
-    xcrun --find stapler
     echo "Requested candidate: $LABEL ($BUILD_NUMBER), architectures: $ARCHS"
-    echo "Preflight does not prove build, signing, notarization, or runtime coverage."
+    echo "Distribution: unsigned DMG. See README.md for first-launch instructions."
     exit 0
 fi
 
@@ -144,15 +135,9 @@ while IFS= read -r dependency; do
     esac
 done < <(awk '/^\t/ { print $1 }' "$OUTPUT/libraries.txt")
 
-if [[ "$MODE" == package-notarized ]]; then
-    CLASS=NOTARIZED
-elif [[ -n "$IDENTITY" ]]; then
-    codesign --force --sign "$IDENTITY" --options runtime --timestamp "$APP"
-    CLASS=SIGNED-UNNOTARIZED
-else
-    codesign --force --sign - --options runtime --timestamp=none "$APP"
-    CLASS=LOCAL-NON-DISTRIBUTABLE
-fi
+# An ad-hoc integrity seal is needed for Apple Silicon. It does not identify a
+# developer or provide notarization, and distribution requires no certificate.
+codesign --force --sign - --options runtime --timestamp=none "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP" 2> "$OUTPUT/signature-verify.txt"
 codesign --display --verbose=4 "$APP" 2> "$OUTPUT/signature.txt"
 grep -Eq 'flags=.*\(.*runtime' "$OUTPUT/signature.txt" || die "Hardened runtime missing"
@@ -162,18 +147,22 @@ if [[ -s "$OUTPUT/entitlements.plist" ]]; then
     entitlements="$(plutil -convert xml1 -o - "$OUTPUT/entitlements.plist")"
     [[ "$entitlements" != *'<key>'* ]] || die "Unexpected entitlements require review"
 fi
-if [[ "$CLASS" != LOCAL-NON-DISTRIBUTABLE ]]; then
-    grep -F 'Authority=Developer ID Application:' "$OUTPUT/signature.txt" >/dev/null || die "Developer ID signature required"
-    grep -E '^Timestamp=' "$OUTPUT/signature.txt" >/dev/null || die "Secure timestamp missing"
-fi
-if [[ "$CLASS" == NOTARIZED ]]; then
-    xcrun stapler validate "$APP" > "$OUTPUT/stapler.txt" 2>&1
-    spctl --assess --type execute --verbose=4 "$APP" > "$OUTPUT/gatekeeper.txt" 2>&1
-fi
 ARCH_LABEL="${ARCHS// /-}"
-ZIP="$OUTPUT/KeeLocker-$LABEL-$ARCH_LABEL-$CLASS.zip"
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-shasum -a 256 "$ZIP" > "$OUTPUT/SHA256SUMS.txt"
-printf '%s\n' "$CLASS" "Candidate: $LABEL ($BUILD_NUMBER)" > "$OUTPUT/STATUS.txt"
-echo "Created $ZIP"
-echo "Classification: $CLASS. Runtime testing and release approval remain separate."
+if [[ "$ARCHS" == "arm64 x86_64" ]]; then ARCH_LABEL=universal; fi
+DMG_NAME="KeeLocker-$LABEL-$ARCH_LABEL.dmg"
+DMG="$OUTPUT/$DMG_NAME"
+STAGING="$(mktemp -d "$OUTPUT/.dmg-stage.XXXXXX")"
+trap 'rm -rf "$STAGING"' EXIT
+chmod 755 "$STAGING"
+ditto "$APP" "$STAGING/KeeLocker.app"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname "KeeLocker $LABEL" -srcfolder "$STAGING" \
+    -format UDZO -fs HFS+ "$DMG" > "$OUTPUT/dmg-create.log" 2>&1
+hdiutil verify "$DMG" > "$OUTPUT/dmg-verify.log" 2>&1
+(
+    cd "$OUTPUT"
+    shasum -a 256 "$DMG_NAME" > SHA256SUMS.txt
+)
+printf '%s\n' "Unsigned DMG" "Candidate: $LABEL ($BUILD_NUMBER)" > "$OUTPUT/STATUS.txt"
+echo "Created $DMG"
+echo "Install: open the DMG and drag KeeLocker to Applications. See README.md for first launch."

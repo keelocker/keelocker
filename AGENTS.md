@@ -33,6 +33,7 @@ cargo fmt --all -- --check
 cargo clippy --locked -p keelocker-core --all-targets -- -D warnings
 bash scripts/check-bindings.sh
 python3 scripts/generate-notices.py --check
+bash scripts/release.sh preflight
 xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/keelocker-derived build
 xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/keelocker-derived -only-testing:KeeLockerTests test
 ```
@@ -53,4 +54,4 @@ Read the relevant topic before modifying its code; there is no need to load the 
 | Change UI deliberately | [DESIGN.md](DESIGN.md), existing views and UI tests |
 | Change Touch ID, cached key material or authentication lifetime | [Session Quick Unlock](docs/touch-id.md), [QuickUnlockTests.swift](KeeLockerTests/QuickUnlockTests.swift) |
 | Change dependencies, license notices or contribution/security policy | [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [notice provenance](licenses/README.md), development guide |
-| Prepare a beta or stable artifact, sign, notarize or verify installation | [Release procedure and gates](docs/release.md) |
+| Build a release DMG, publish assets or verify installation | [Release procedure](docs/release.md), [release workflow](.github/workflows/release.yml) |

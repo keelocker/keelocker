@@ -14,6 +14,21 @@ macOS is the current platform. There are no iOS, Android or Windows app targets.
 
 *The built-in demo vault is shown; all account details are synthetic.*
 
+## Install
+
+Download the `.dmg` from [GitHub Releases](https://github.com/keelocker/keelocker/releases),
+open it, and drag **KeeLocker** to **Applications**. Eject the disk image and
+open KeeLocker from Applications.
+
+KeeLocker is distributed without an Apple Developer ID signature or
+notarization. If macOS blocks the first launch, open **System Settings → Privacy
+& Security**, find the KeeLocker message and choose **Open Anyway**, then confirm
+the launch. This creates an exception for KeeLocker; subsequent launches work
+normally. See [Apple's instructions](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
+
+The download includes Apple Silicon and Intel builds in one app and requires
+macOS 14 or newer. Check the release notes for the systems actually tested.
+
 ## Use
 
 Open a `.kdbx` with **File → Open** (⌘O), then enter its password and optional key
@@ -177,8 +192,8 @@ KeePassXC interoperability, binding comparison and macOS build/Swift tests.
 Native UI automation and fingerprint success require host support and manual
 verification; they are not covered by the hosted workflow.
 
-Release builds, signing, notarization, installation checks, independent recovery
-and the limited-beta gates are described in [Release procedure](docs/release.md).
+DMG builds, installation checks, independent recovery and the limited beta are
+described in [Release procedure](docs/release.md).
 
 Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 Security reporting and reporting-channel status: [SECURITY.md](SECURITY.md).
