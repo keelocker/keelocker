@@ -16,7 +16,7 @@ struct RootView: View {
     @State private var listToolbarTitleWidth: CGFloat?
     @AppStorage("automaticallyDownloadWebsiteIcons") private var automaticallyDownloadWebsiteIcons = false
 
-    private var rootContent: some View {
+    private var vaultContent: some View {
         Group {
             if store.isLocked {
                 LockedVaultView(
@@ -45,6 +45,10 @@ struct RootView: View {
         .focusedSceneValue(\.recoverVault, recoverVaultAction)
         .background(VaultWindowGuard(store: store))
         .overlay(alignment: .bottomTrailing) { if store.isBusy { ProgressView().controlSize(.small).padding() } }
+    }
+
+    private var rootContent: some View {
+        vaultContent
         .alert(store.operationFailure?.title ?? "Touch ID", isPresented: Binding(get: {
             store.operationFailure != nil || (!store.isLocked && !showsUnlock && store.quickUnlockFailure != nil)
         }, set: { if !$0 { store.operationFailure = nil; store.quickUnlockFailure = nil } })) {
@@ -62,17 +66,7 @@ struct RootView: View {
                 Button("OK") { store.operationFailure = nil; store.quickUnlockFailure = nil }
             }
         } message: { Text(store.operationFailure?.message ?? store.quickUnlockFailure?.message ?? "") }
-        .task {
-            if !didOfferInitialUnlock {
-                didOfferInitialUnlock = true
-                if store.state == .locked, store.requiresPassword { showsUnlock = true }
-            }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { return }
-                await store.refreshOTP()
-            }
-        }
+        .task { await refreshSession() }
     }
 
     var body: some View {
@@ -93,6 +87,19 @@ struct RootView: View {
         }
         .onChange(of: store.state) { _, state in
             if state == .unlocked { showsUnlock = false }
+        }
+    }
+
+    @MainActor
+    private func refreshSession() async {
+        if !didOfferInitialUnlock {
+            didOfferInitialUnlock = true
+            if store.state == .locked, store.requiresPassword { showsUnlock = true }
+        }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            await store.refreshOTP()
         }
     }
 
