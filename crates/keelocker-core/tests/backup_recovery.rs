@@ -615,6 +615,29 @@ fn recovery_applies_bounded_key_file_and_kdf_validation_before_creating_copy() {
 }
 
 #[test]
+fn recovery_requires_the_authenticated_end_of_stream_before_publishing() {
+    let fixture = Fixture::new();
+    fixture.save("Committed edit");
+    fixture.change("Unsaved edit");
+    let original_path = fixture.namespace().join("original.kdbx");
+    let truncated = &fixture.original[..fixture.original.len() - 36];
+    fs::write(&original_path, truncated).unwrap();
+    let original = fixture.original_record();
+    let before = inventory(&fixture.base);
+    assert_eq!(
+        fixture.restore(&original.id, "rejected.kdbx", PASSWORD),
+        Err(CoreError::CorruptedDatabase)
+    );
+    assert_eq!(inventory(&fixture.base), before);
+    assert!(!fixture.base.join("rejected.kdbx").exists());
+    assert!(fixture.vault.snapshot().unwrap().info.dirty);
+    assert_eq!(
+        fixture.vault.snapshot().unwrap().entries[0].title,
+        "Unsaved edit"
+    );
+}
+
+#[test]
 fn oversized_original_and_pipe_key_file_fail_without_creating_output() {
     let fixture = Fixture::new();
     fixture.save("Saved edit");
@@ -727,4 +750,93 @@ fn keepassxc_independently_opens_restored_original_and_generation() {
         let xml = String::from_utf8(output.stdout).unwrap();
         assert!(xml.contains("Synthetic original") || xml.contains("Synthetic generation"));
     }
+}
+
+#[test]
+#[ignore = "requires KeePassXC CLI; separate temporary directories on the same disk"]
+fn keepassxc_independent_copy_survives_loss_of_source_and_local_backups() {
+    let fixture = Fixture::new();
+    fixture.save("Synthetic independent current revision");
+    let current = fs::read(&fixture.source).unwrap();
+    let local_original = fixture.namespace().join("original.kdbx");
+    assert_eq!(fs::read(&local_original).unwrap(), fixture.original);
+
+    // This models a copied encrypted vault/backup, not an external device.
+    // Both TempDirs are independently owned by this test on the same disk.
+    let independent = tempfile::tempdir().unwrap();
+    let independent_root = independent.path().canonicalize().unwrap();
+    let copied_current = independent_root.join("current.kdbx");
+    let copied_original = independent_root.join("original.kdbx");
+    fs::copy(&fixture.source, &copied_current).unwrap();
+    fs::copy(&local_original, &copied_original).unwrap();
+    for file in [&copied_current, &copied_original] {
+        File::open(file).unwrap().sync_all().unwrap();
+    }
+    File::open(&independent_root).unwrap().sync_all().unwrap();
+    fixture.vault.lock();
+    assert!(matches!(
+        fixture.vault.key_material(),
+        Err(CoreError::InvalidOperation)
+    ));
+
+    // Remove only the TempDir created by Fixture, including its source, .bak
+    // and configured recovery namespace. Neither copied file is in that tree.
+    assert!(!independent_root.starts_with(&fixture.base));
+    fs::remove_dir_all(&fixture.base).unwrap();
+    assert!(!fixture.source.exists());
+    assert!(!fixture.root.exists());
+    assert!(!local_original.exists());
+    assert_eq!(fs::read(&copied_current).unwrap(), current);
+    assert_eq!(fs::read(&copied_original).unwrap(), fixture.original);
+
+    // Restore each standalone encrypted copy to another new file and reopen
+    // with both a fresh Rust session and an independent KeePassXC process.
+    for (index, (copy, expected_title)) in [
+        (&copied_current, "Synthetic independent current revision"),
+        (&copied_original, "Synthetic original"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let restored = independent_root.join(format!("restored-{index}.kdbx"));
+        fs::copy(copy, &restored).unwrap();
+        File::open(&restored).unwrap().sync_all().unwrap();
+        let reopened = CoreVault::open(path(&restored), PASSWORD.into(), None).unwrap();
+        assert_eq!(
+            reopened.snapshot().unwrap().entries[0].title,
+            expected_title
+        );
+        reopened.lock();
+        let cli = std::env::var("KEEPASSXC_CLI")
+            .unwrap_or_else(|_| "/Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli".into());
+        let mut child = Command::new(cli)
+            .args(["export", "-q", &path(&restored)])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("KeePassXC CLI required");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("{PASSWORD}\n").as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "KeePassXC rejected standalone copied backup (output intentionally withheld)"
+        );
+        let xml = String::from_utf8(output.stdout).unwrap();
+        assert!(xml.contains(expected_title));
+        if index == 0 {
+            assert!(xml.contains("synthetic-secret"));
+            assert!(
+                xml.contains("Synthetic original"),
+                "History must survive the copied current revision"
+            );
+        }
+        assert_eq!(fs::read(copy).unwrap(), fs::read(&restored).unwrap());
+    }
+    assert!(!fixture.base.exists());
 }

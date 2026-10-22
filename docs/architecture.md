@@ -84,6 +84,11 @@ completion even if cancellation happened outside the native operation.
 
 ## Drafts, mutations and persistence errors
 
+Attachment import opens a regular-file descriptor off the main actor and reads
+incrementally with a 64 MiB bound, including a growth check beyond the limit.
+Reject oversized or special files before passing bytes across the repository
+boundary. Session and inspection guards still discard obsolete import results.
+
 `VaultStore.addItem` creates an application draft in the selected group (or database root), preserving the sidebar scope. It does not call the repository. Cancel restores the prior selection and leaves the file untouched. A draft created from Favorites starts starred.
 
 Save issues `createEntry` or `updateEntry`. In the Rust adapter, every mutation then attempts `CoreVault.save`; explicit Save, Save As and Reload are handled separately. The Rust mutation methods themselves do not autosave, so other consumers must supply their own persistence policy.
@@ -200,6 +205,19 @@ sites are retried on re-enable or a new session. Lock/replacement clears all
 download caches, origins and attempt metadata. Nothing is written to preferences
 except the boolean; networking errors are quiet in automatic mode, while save
 failures use the normal unsaved warning.
+
+## Attachment export
+
+Attachment export uses `AttachmentExport` outside the repository's encrypted
+save path. It writes private plaintext staging files off the main thread and
+publishes with an exclusive hard link: existing files, symlinks and hard links
+are never replaced, including after a native Replace confirmation. It also
+rejects the active vault pathname, its `.bak`, the configured backup directory
+(the app uses Application Support) and the sibling `.keelocker-backups` tree
+when the destination is absent. Checks use the opened destination directory,
+canonical paths and the volume's case sensitivity. Picker completion, attachment
+reads and export errors remain bound to the originating session and inspection.
+The sheet explains that export requires a new filename.
 
 ## Clipboard lifetime
 

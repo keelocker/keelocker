@@ -27,6 +27,13 @@ Review fixes in the existing parsers and reference handling:
   tombstone, so custom icons and Meta UUID references remain consistent.
 Regression coverage: `review_safety.rs` and `review_attachments.rs`.
 
+`format/hmac_block_stream.rs` requires the authenticated empty terminal block
+of a KDBX4 stream. Reaching EOF after authenticated ciphertext blocks is not a
+complete stream: removing only the terminal block previously still admitted a
+truncated file. Open and reload regressions in `review_safety.rs` verify rejection
+and retention of unsaved edits after a failed reload; the independent KeePassXC
+matrix continues to cover valid streams.
+
 `Database::save_and_reopen` reuses the freshly derived KDF output for validation
 of bytes generated within that same call. It retains the existing authenticated
 decoder and fresh salts/IVs; it does not expose a caller-supplied derived key or

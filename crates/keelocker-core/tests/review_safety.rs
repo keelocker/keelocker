@@ -61,6 +61,58 @@ fn kdbx3_protected_stream_header_tampering_is_rejected() {
 }
 
 #[test]
+fn kdbx4_requires_the_authenticated_end_of_stream() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("terminated.kdbx");
+    let mut bytes = Vec::new();
+    database().save(&mut bytes, key()).unwrap();
+    fs::write(&source, &bytes).unwrap();
+    CoreVault::open(path(&source), PASSWORD.into(), None)
+        .unwrap()
+        .lock();
+
+    // The final HMAC block has a 32-byte MAC and a zero 4-byte length.
+    // Removing it leaves every ciphertext data block intact and authenticated,
+    // but must not turn a truncated stream into an accepted complete vault.
+    assert_eq!(&bytes[bytes.len() - 4..], &[0; 4]);
+    let truncated = &bytes[..bytes.len() - 36];
+    fs::write(&source, truncated).unwrap();
+    assert!(
+        matches!(
+            CoreVault::open(path(&source), PASSWORD.into(), None),
+            Err(CoreError::CorruptedDatabase)
+        ),
+        "A missing authenticated stream terminator must fail closed"
+    );
+    assert_eq!(fs::read(&source).unwrap(), truncated);
+}
+
+#[test]
+fn reload_requires_the_authenticated_end_of_stream_and_retains_unsaved_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.kdbx");
+    let rescued = dir.path().join("rescued.kdbx");
+    database()
+        .save(&mut fs::File::create(&source).unwrap(), key())
+        .unwrap();
+    let vault = CoreVault::open(path(&source), PASSWORD.into(), None).unwrap();
+    let id = vault.snapshot().unwrap().entries[0].id.clone();
+    vault
+        .update_entry(id.clone(), edit("Unsaved edit"))
+        .unwrap();
+    let bytes = fs::read(&source).unwrap();
+    fs::write(&source, &bytes[..bytes.len() - 36]).unwrap();
+    assert_eq!(vault.reload(), Err(CoreError::CorruptedDatabase));
+    assert_eq!(vault.entry(id.clone()).unwrap().title, "Unsaved edit");
+    assert!(vault.snapshot().unwrap().info.dirty);
+    assert_eq!(vault.save(), Err(CoreError::Conflict));
+    vault.save_as(path(&rescued)).unwrap();
+    let reopened = CoreVault::open(path(&rescued), PASSWORD.into(), None).unwrap();
+    assert_eq!(reopened.entry(id).unwrap().title, "Unsaved edit");
+    assert_eq!(fs::read(&source).unwrap(), bytes[..bytes.len() - 36]);
+}
+
+#[test]
 fn malformed_reload_preserves_unsaved_session_and_save_copy() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("source.kdbx");

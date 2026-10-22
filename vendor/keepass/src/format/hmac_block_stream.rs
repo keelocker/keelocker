@@ -43,13 +43,17 @@ pub(crate) fn read_hmac_block_stream(
         block_index += 1;
 
         if size == 0 {
-            break;
+            return Ok(out);
         }
 
         out.extend_from_slice(block);
     }
 
-    Ok(out)
+    // Exhausting data blocks is not an authenticated end of stream. In
+    // particular, a file truncated exactly before the final empty block still
+    // has valid data-block MACs and may decrypt/decompress into complete XML.
+    // Require the separately authenticated empty block before accepting it.
+    Err(BlockStreamError::Eof)
 }
 
 #[cfg(feature = "save_kdbx4")]

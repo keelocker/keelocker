@@ -1,9 +1,41 @@
 import XCTest
 import AppKit
+import Darwin
 @testable import KeeLocker
 
 @MainActor
 final class VaultStoreTests: XCTestCase {
+    func testAttachmentImportRejectsOversizedSparseFiles() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: nil))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(AttachmentImport.maximumBytes + 1))
+        try handle.close()
+        XCTAssertThrowsError(try AttachmentImport.load(url))
+    }
+
+    func testAttachmentImportPreservesBoundedAndEmptyFiles() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("synthetic.bin")
+        let alias = directory.appendingPathComponent("alias.bin")
+        let data = Data(repeating: 42, count: 1024)
+        try data.write(to: url)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: url)
+        XCTAssertEqual(try AttachmentImport.load(url, limit: 1024), data)
+        XCTAssertEqual(try AttachmentImport.load(alias, limit: 1024), data)
+        XCTAssertThrowsError(try AttachmentImport.load(url, limit: 1023))
+        try Data().write(to: url)
+        XCTAssertEqual(try AttachmentImport.load(url, limit: 1024), Data())
+        XCTAssertThrowsError(try AttachmentImport.load(directory))
+        let fifo = directory.appendingPathComponent("synthetic.fifo")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        XCTAssertThrowsError(try AttachmentImport.load(fifo))
+        XCTAssertThrowsError(try AttachmentImport.load(URL(fileURLWithPath: "/dev/null")))
+    }
+
     func testRecycleBinScopesRestoreAndDirectMutationGuards() async throws {
         let root = VaultGroup(id: UUID(), name: "Root", path: "Root")
         let source = VaultGroup(id: UUID(), name: "Source", parentID: root.id, path: "Root / Source")
@@ -306,6 +338,33 @@ final class VaultStoreTests: XCTestCase {
             XCTFail("Invalid images must not enter the draft")
         } catch { XCTAssertTrue(error is IconImageImport.Failure) }
         XCTAssertNil(IconImageImport.preview(Data()))
+    }
+
+    func testIconFileImportUsesBoundedRegularFileReads() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("Synthetic.png")
+        let alias = directory.appendingPathComponent("Alias.png")
+        let image = try syntheticIconPNG()
+        try image.write(to: url)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: url)
+        XCTAssertEqual(try IconImageImport.load(alias).data, try IconImageImport.load(url).data)
+        let writer = try FileHandle(forWritingTo: url)
+        try writer.truncate(atOffset: UInt64(20 * 1024 * 1024 + 1))
+        try writer.close()
+        XCTAssertThrowsError(try BoundedFileRead.load(url, limit: 20 * 1024 * 1024)) {
+            XCTAssertEqual($0 as? BoundedFileRead.Failure, .tooLarge)
+        }
+        XCTAssertThrowsError(try IconImageImport.load(url)) { XCTAssertTrue($0 is IconImageImport.Failure) }
+        let fifo = directory.appendingPathComponent("Synthetic.fifo")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        for special in [directory, fifo, URL(fileURLWithPath: "/dev/null")] {
+            XCTAssertThrowsError(try BoundedFileRead.load(special, limit: 20 * 1024 * 1024)) {
+                XCTAssertEqual($0 as? BoundedFileRead.Failure, .unsupportedFile)
+            }
+            XCTAssertThrowsError(try IconImageImport.load(special)) { XCTAssertTrue($0 is IconImageImport.Failure) }
+        }
     }
 
     func testDemoIconDraftCancelSaveAndLock() async throws {

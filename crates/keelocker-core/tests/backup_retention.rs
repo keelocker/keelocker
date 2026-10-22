@@ -306,6 +306,77 @@ fn failed_backups_keep_original_and_dirty_edit_and_allow_rescue_save_as() {
 }
 
 #[test]
+fn filesystem_permission_denials_preserve_source_dirty_edit_and_allow_retry() {
+    // Root can bypass these mode bits, so it cannot exercise this OS boundary.
+    // SAFETY: geteuid has no preconditions and changes no state.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    struct RestorePermissions(PathBuf, fs::Permissions);
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            fs::set_permissions(&self.0, self.1.clone()).unwrap();
+        }
+    }
+    for obstruction in ["source-read", "destination-write", "backup-parent-write"] {
+        let fixture = Fixture::new();
+        let original = fs::read(&fixture.source).unwrap();
+        fixture.change("Retained permission-denied edit");
+        let target = match obstruction {
+            "source-read" => fixture.source.clone(),
+            "destination-write" => fixture.source.parent().unwrap().to_path_buf(),
+            "backup-parent-write" => {
+                let parent = fixture.root.parent().unwrap();
+                fs::create_dir(parent).unwrap();
+                parent.to_path_buf()
+            }
+            _ => unreachable!(),
+        };
+        let restore =
+            RestorePermissions(target.clone(), fs::metadata(&target).unwrap().permissions());
+        let mode = if obstruction == "source-read" {
+            0o000
+        } else {
+            0o500
+        };
+        fs::set_permissions(&target, fs::Permissions::from_mode(mode)).unwrap();
+        let result = fixture.vault.save();
+        drop(restore);
+        assert_eq!(
+            result,
+            Err(if obstruction == "source-read" {
+                CoreError::Conflict
+            } else {
+                CoreError::WriteFailed
+            }),
+            "{obstruction}"
+        );
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            original,
+            "{obstruction}"
+        );
+        let snapshot = fixture.vault.snapshot().unwrap();
+        assert!(snapshot.info.dirty);
+        assert_eq!(snapshot.entries[0].title, "Retained permission-denied edit");
+        assert_eq!(
+            open(&fixture.source).snapshot().unwrap().entries[0].title,
+            "Synthetic original"
+        );
+        fixture.vault.save().unwrap();
+        assert!(!fixture.vault.snapshot().unwrap().info.dirty);
+        assert_eq!(
+            open(&fixture.source).snapshot().unwrap().entries[0].title,
+            "Retained permission-denied edit"
+        );
+        assert_eq!(
+            fs::read(fixture.namespace().join("original.kdbx")).unwrap(),
+            original
+        );
+    }
+}
+
+#[test]
 fn retry_deduplicates_source_and_preserves_existing_regular_original() {
     let fixture = Fixture::new();
     let namespace = fixture.namespace();

@@ -85,7 +85,11 @@ complete model, including protected values, metadata, history and attachment
 bytes. It writes a private temporary file beside the destination, syncs it,
 creates an encrypted `.bak` of the previous source, checks for external changes
 and atomically replaces the source. Vault saving writes no plaintext. Attachment
-export deliberately writes the selected attachment to the chosen destination.
+export deliberately writes the selected attachment as plaintext to a new file.
+It never replaces an existing destination, even after a native Replace prompt;
+choose a new filename. The current vault path, its `.bak` and KeeLocker's
+recovery directories cannot be export destinations, including when files are
+missing.
 
 Before the first replacement, KeeLocker also preserves the original encrypted
 file and keeps versioned recovery copies in
@@ -126,6 +130,8 @@ changes. Save As refuses an existing different destination.
   16 MiB for a key file, 256 MiB/100 iterations/16 lanes for Argon2, and
   100 million AES-KDF rounds. These are admission limits, not a guarantee of
   constant memory usage or instant cancellation.
+  Attachment imports are limited to 64 MiB per file; larger files are rejected
+  before mutation.
   Some authentication damage is indistinguishable from wrong credentials.
   Swift strings and copied buffers are not guaranteed to be zeroed; plaintext
   exists while unlocked.
@@ -170,6 +176,9 @@ The [CI workflow](.github/workflows/ci.yml) defines Rust MSRV/stable checks,
 KeePassXC interoperability, binding comparison and macOS build/Swift tests.
 Native UI automation and fingerprint success require host support and manual
 verification; they are not covered by the hosted workflow.
+
+Release builds, signing, notarization, installation checks, independent recovery
+and the limited-beta gates are described in [Release procedure](docs/release.md).
 
 Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 Security reporting and reporting-channel status: [SECURITY.md](SECURITY.md).

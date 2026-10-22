@@ -111,6 +111,7 @@ final class VaultStore: ObservableObject {
     var sessionID: UUID { generation }
     var requiresPassword: Bool { repository?.requiresPassword ?? false }
     var supportsRecovery: Bool { repository?.supportsRecovery == true && fileURL != nil }
+    var attachmentExportBackupDirectory: URL? { backupDirectory }
     var canEnableTouchID: Bool { repository?.supportsQuickUnlock == true && fileURL != nil && touchIDAvailable }
     var ordinaryGroups: [VaultGroup] { groups.filter { !recycledGroupIDs.contains($0.id) } }
     var activeItems: [VaultItem] { items.filter { !recycledGroupIDs.contains($0.group.id) } }

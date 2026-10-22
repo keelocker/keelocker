@@ -1,6 +1,36 @@
 import Foundation
+import Darwin
 import ImageIO
 import UniformTypeIdentifiers
+
+enum BoundedFileRead {
+    enum Failure: Error, Equatable { case unsupportedFile, tooLarge }
+
+    static func load(_ url: URL, limit: Int) throws -> Data {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        // Open without waiting on special files, then validate the descriptor
+        // that will actually be read, rather than a separate pathname lookup.
+        let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard metadata.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { throw Failure.unsupportedFile }
+        guard limit >= 0, metadata.st_size >= 0, metadata.st_size <= limit else { throw Failure.tooLarge }
+        var data = Data()
+        while true {
+            try Task.checkCancellation()
+            let remaining = limit - data.count
+            let chunk = try handle.read(upToCount: remaining > 0 ? min(64 * 1024, remaining) : 1) ?? Data()
+            guard !chunk.isEmpty else { return data }
+            // A file may grow after fstat. Never retain more than the limit.
+            guard chunk.count <= remaining else { throw Failure.tooLarge }
+            data.append(chunk)
+        }
+    }
+}
 
 @MainActor
 final class IconImportSession {
@@ -50,11 +80,9 @@ enum IconImageImport {
     enum Failure: Error { case invalidImage }
 
     static func load(_ url: URL) throws -> VaultCustomIcon {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size > 0, size <= 20 * 1024 * 1024 else { throw Failure.invalidImage }
-        let data = try Data(contentsOf: url)
+        let data: Data
+        do { data = try BoundedFileRead.load(url, limit: 20 * 1024 * 1024) }
+        catch is BoundedFileRead.Failure { throw Failure.invalidImage }
         let name = String(url.deletingPathExtension().lastPathComponent.prefix(200))
         return try normalized(data, name: name)
     }

@@ -65,7 +65,7 @@ struct RootView: View {
             } else {
                 Button("OK") { store.operationFailure = nil; store.quickUnlockFailure = nil }
             }
-        } message: { Text(store.operationFailure?.message ?? store.quickUnlockFailure?.message ?? "") }
+        } message: { Text(store.operationFailure?.message ?? store.quickUnlockFailure?.enrollmentMessage ?? "") }
         .task { await refreshSession() }
     }
 

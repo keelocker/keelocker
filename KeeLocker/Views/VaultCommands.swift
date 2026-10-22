@@ -2,6 +2,27 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum AttachmentImport {
+    static let maximumBytes = 64 * 1024 * 1024
+
+    enum Failure: Error {
+        case unsupportedFile, tooLarge
+
+        var message: String {
+            switch self {
+            case .unsupportedFile: "Choose a regular file to attach."
+            case .tooLarge: "Choose an attachment no larger than 64 MiB."
+            }
+        }
+    }
+
+    static func load(_ url: URL, limit: Int = maximumBytes) throws -> Data {
+        do { return try BoundedFileRead.load(url, limit: limit) }
+        catch BoundedFileRead.Failure.tooLarge { throw Failure.tooLarge }
+        catch BoundedFileRead.Failure.unsupportedFile { throw Failure.unsupportedFile }
+    }
+}
+
 // Platform commands live here; the repository only receives domain commands.
 @MainActor
 enum VaultDialogs {
@@ -142,6 +163,8 @@ struct EntryFilesAndHistory: View {
     @State private var versions: [VaultEntry] = []
     @State private var selectedVersion: Int?
     @State private var failure: VaultFailure?
+    @State private var importFailure: String?
+    @State private var exportFailure: String?
     @State private var working = false
     @State private var fileTask: Task<Void, Never>?
     @Environment(\.dismiss) private var dismiss
@@ -174,6 +197,8 @@ struct EntryFilesAndHistory: View {
                 }
             }.frame(maxHeight: 160)
             if let failure { Text(failure.message).foregroundStyle(.red) }
+            if let importFailure { Text(importFailure).foregroundStyle(.red) }
+            if let exportFailure { Text(exportFailure).foregroundStyle(.red) }
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.cancelAction) }
         }
         .padding(24).frame(width: 580)
@@ -217,32 +242,63 @@ struct EntryFilesAndHistory: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard !store.isLocked, store.sessionID == session, store.inspectedEntryID == id else { return }
         working = true
+        importFailure = nil
         fileTask = Task {
             defer { working = false }
             do {
-                let data = try await Task.detached { try Data(contentsOf: url) }.value
+                let data = try await Task.detached { try AttachmentImport.load(url) }.value
                 guard !Task.isCancelled, !store.isLocked, store.sessionID == session,
                       store.inspectedEntryID == id else { return }
                 store.run(.putAttachment(id, url.lastPathComponent, data), session: session)
                 await store.waitForOperation()
-            } catch { failure = .failedToReadFile }
+            } catch {
+                guard !Task.isCancelled, store.sessionID == session, store.inspectedEntryID == id else { return }
+                importFailure = (error as? AttachmentImport.Failure)?.message ?? VaultFailure.failedToReadFile.message
+            }
         }
     }
 
     private func export(_ name: String) {
+        guard !store.isLocked, !store.isBusy, !working, store.inspectedEntryID == id else { return }
         let session = store.sessionID
         let panel = NSSavePanel()
         panel.nameFieldStringValue = URL(fileURLWithPath: name).lastPathComponent
+        panel.message = "Attachments are exported as plaintext. Choose a new filename; existing files are never replaced."
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard !store.isLocked, !store.isBusy, store.sessionID == session,
+              store.inspectedEntryID == id else { return }
+        let vaultURL = store.fileURL
+        let backupDirectory = store.attachmentExportBackupDirectory
         working = true
+        exportFailure = nil
         fileTask = Task {
-            defer { working = false }
+            defer {
+                if store.sessionID == session, store.inspectedEntryID == id {
+                    working = false
+                    fileTask = nil
+                }
+            }
             do {
                 let data = try await store.attachment(id, name: name)
-                guard !Task.isCancelled, store.sessionID == session else { return }
-                try await Task.detached { try data.write(to: url, options: .atomic) }.value
-            } catch { if !(error is CancellationError) { failure = .writeFailed } }
+                guard !Task.isCancelled, !store.isLocked, store.sessionID == session,
+                      store.inspectedEntryID == id, store.fileURL == vaultURL else { return }
+                let writer = Task.detached {
+                    try AttachmentExport.write(data, to: url, vaultURL: vaultURL, backupDirectory: backupDirectory)
+                }
+                try await withTaskCancellationHandler {
+                    try await writer.value
+                } onCancel: {
+                    writer.cancel()
+                }
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError), !store.isLocked,
+                      store.sessionID == session, store.inspectedEntryID == id,
+                      store.fileURL == vaultURL else { return }
+                exportFailure = (error as? AttachmentExport.Failure)?.message
+                    ?? "Couldn’t export this attachment. Check the destination and permissions, then choose a new filename."
+            }
         }
     }
 }
