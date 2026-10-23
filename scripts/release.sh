@@ -119,7 +119,7 @@ read -r -a actual_archs < "$OUTPUT/architectures.txt"
 read -r -a expected_archs <<< "$ARCHS"
 [[ ${#actual_archs[@]} == ${#expected_archs[@]} ]] || die "Unexpected architecture count"
 for arch in $ARCHS; do
-    lipo -verify_arch "$arch" "$EXECUTABLE"
+    lipo "$EXECUTABLE" -verify_arch "$arch"
 done
 vtool -show-build "$EXECUTABLE" > "$OUTPUT/mach-o-build.txt"
 min_versions="$(awk '$1 == "minos" { print $2 }' "$OUTPUT/mach-o-build.txt")"
