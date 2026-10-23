@@ -11,6 +11,8 @@
 - Use synthetic vaults and temporary copies for tests and manual checks. Keep real passwords, key files, decrypted data and user vaults out of logs, preferences, fixtures and commits. The remembered vault path is the intended preferences exception.
 - Retain save validation, conflict checks and encrypted backups. Preserve the pinned original and versioned recovery files before replacing a vault; backup failure must retain the source and dirty edit. Clean Save must preserve file bytes and backups. Adopt a committed save's path/hash even if directory sync fails, retaining the unsaved warning for retry. Recover conflicts through Save Copy or an explicit reload; never silently overwrite another client's changes.
 - Apply bounded file/key-file reads and the library's scoped KDF/decompression limits before expensive work. Reject unsupported costs without lowering imported cryptographic settings. Keep failure injection confined to Rust test builds.
+- Require the authenticated KDBX4 end-of-stream block on open and reload. Bound attachment imports to 64 MiB using regular-file descriptors and incremental reads before passing bytes to the repository.
+- Export attachments only to new files, with private staging and exclusive publication. Reject the active vault path, its `.bak` and owned recovery directories even when the destination is absent. Bind export results and errors to the originating session and inspection.
 - New items remain drafts until Save. Existing mutation commands autosave through the repository adapter; report persistence failures without dropping the in-memory edit.
 - Honor the imported recycle-bin setting. Move enabled deletions into the bin; use an explicit confirmed command for permanent deletion there. Exclude its descendants from active lists and automatic mutations. Trash/Restore change location without history checkpoints or retention pruning; preserve UUID/history/assets and fall back to the root if the old parent no longer exists.
 - Recovery lists only owned encrypted copies and validates the selected copy with its own credentials before publishing a new file. Keep it available after failed unlock; bind dialogs/results to their originating session and retain the current vault, dirty edits and all backups. Never overwrite an existing recovery destination.
@@ -31,6 +33,7 @@ cargo fmt --all -- --check
 cargo clippy --locked -p keelocker-core --all-targets -- -D warnings
 bash scripts/check-bindings.sh
 python3 scripts/generate-notices.py --check
+bash scripts/release.sh preflight
 xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/keelocker-derived build
 xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/keelocker-derived -only-testing:KeeLockerTests test
 ```
@@ -51,3 +54,4 @@ Read the relevant topic before modifying its code; there is no need to load the 
 | Change UI deliberately | [DESIGN.md](DESIGN.md), existing views and UI tests |
 | Change Touch ID, cached key material or authentication lifetime | [Session Quick Unlock](docs/touch-id.md), [QuickUnlockTests.swift](KeeLockerTests/QuickUnlockTests.swift) |
 | Change dependencies, license notices or contribution/security policy | [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [notice provenance](licenses/README.md), development guide |
+| Build a release DMG, publish assets or verify installation | [Release procedure](docs/release.md), [release workflow](.github/workflows/release.yml) |

@@ -4,6 +4,12 @@ import CryptoKit
 enum QuickUnlockFailure: Error, Equatable, Sendable {
     case cancelled, unavailable, authenticationFailed, missingKey, storageFailed, invalidMaterial
 
+    var enrollmentMessage: String {
+        self == .cancelled
+            ? "Touch ID setup was cancelled. Your vault is unlocked."
+            : "Touch ID could not be enabled. Your vault is unlocked. You can try again after locking it."
+    }
+
     var message: String {
         switch self {
         case .cancelled: "Touch ID was cancelled. You can unlock with your master password."

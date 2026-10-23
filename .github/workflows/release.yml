@@ -1,0 +1,63 @@
+name: Release DMG
+
+"on":
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  dmg:
+    name: Universal macOS DMG
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      RUSTUP_TOOLCHAIN: stable
+      KEELOCKER_RELEASE_ARCHS: arm64 x86_64
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - name: Resolve candidate version
+        run: |
+          label="${RELEASE_TAG#v}"
+          if [[ ! "$label" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "Invalid release tag" >&2
+            exit 1
+          fi
+          build_number="$(awk '/CURRENT_PROJECT_VERSION =/ { gsub(/;/, "", $3); versions[$3] = 1 } END { for (v in versions) { value = v; count++ } if (count != 1 || value !~ /^[1-9][0-9]*$/) exit 1; print value }' KeeLocker.xcodeproj/project.pbxproj)"
+          echo "KEELOCKER_RELEASE_LABEL=$label" >> "$GITHUB_ENV"
+          echo "KEELOCKER_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          echo "KEELOCKER_RELEASE_OUTPUT=$RUNNER_TEMP/keelocker-release" >> "$GITHUB_ENV"
+      - name: Require selected Xcode
+        run: xcodebuild -version
+      - name: Install Rust and both macOS targets
+        run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin --target x86_64-apple-darwin
+      - name: Fetch locked dependency sources for notices
+        run: cargo fetch --locked
+      - name: Build and inspect universal DMG
+        run: bash scripts/release.sh build
+      - name: Upload and verify release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "$RELEASE_TAG" "$KEELOCKER_RELEASE_OUTPUT"/*.dmg "$KEELOCKER_RELEASE_OUTPUT/SHA256SUMS.txt"
+          download_dir="$(mktemp -d "$RUNNER_TEMP/keelocker-download.XXXXXX")"
+          gh release download "$RELEASE_TAG" --pattern "KeeLocker-$KEELOCKER_RELEASE_LABEL-universal.dmg" --pattern SHA256SUMS.txt --dir "$download_dir"
+          cd "$download_dir"
+          shasum -a 256 -c SHA256SUMS.txt

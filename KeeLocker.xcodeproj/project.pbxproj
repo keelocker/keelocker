@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        AE000000000000000000000D /* AttachmentExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000D; };
+        AE000000000000000000000E /* AttachmentExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000E; };
         AE000000000000000000000C /* RecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000C; };
         AE000000000000000000000A /* VaultRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000A; };
         AE000000000000000000000B /* VaultRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000B; };
@@ -63,6 +65,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+        BE000000000000000000000D /* AttachmentExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/macOS/AttachmentExport.swift; sourceTree = SOURCE_ROOT; };
+        BE000000000000000000000E /* AttachmentExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerTests/AttachmentExportTests.swift; sourceTree = SOURCE_ROOT; };
         BE000000000000000000000C /* RecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerTests/RecoveryTests.swift; sourceTree = SOURCE_ROOT; };
         BE000000000000000000000A /* VaultRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Models/VaultRecovery.swift; sourceTree = SOURCE_ROOT; };
         BE000000000000000000000B /* VaultRecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Views/VaultRecoveryView.swift; sourceTree = SOURCE_ROOT; };
@@ -159,6 +163,7 @@
                 BE0000000000000000000008 /* FaviconDownloader.swift */,
                 BE000000000000000000000A /* VaultRecovery.swift */,
                 BE000000000000000000000B /* VaultRecoveryView.swift */,
+                BE000000000000000000000D /* AttachmentExport.swift */,
 				BE0000000000000000000007 /* EntryIconPicker.swift */,
 				BB0000000000000000000000,
 				BB0000000000000000000001,
@@ -229,6 +234,7 @@
 				B20000000000000000000001 /* VaultStoreTests.swift */,
                 BE0000000000000000000009 /* FaviconTests.swift */,
                 BE000000000000000000000C /* RecoveryTests.swift */,
+                BE000000000000000000000E /* AttachmentExportTests.swift */,
 				BD0000000000000000000002,
 				BE0000000000000000000002 /* ClipboardTests.swift */,
 			);
@@ -393,6 +399,7 @@
                 AE0000000000000000000008 /* FaviconDownloader.swift in Sources */,
                 AE000000000000000000000A /* VaultRecovery.swift in Sources */,
                 AE000000000000000000000B /* VaultRecoveryView.swift in Sources */,
+                AE000000000000000000000D /* AttachmentExport.swift in Sources */,
 				AE0000000000000000000007 /* EntryIconPicker.swift in Sources */,
 				AA0000000000000000000000,
 				AA0000000000000000000001,
@@ -421,6 +428,7 @@
 				A20000000000000000000001 /* VaultStoreTests.swift in Sources */,
                 AE0000000000000000000009 /* FaviconTests.swift in Sources */,
                 AE000000000000000000000C /* RecoveryTests.swift in Sources */,
+                AE000000000000000000000E /* AttachmentExportTests.swift in Sources */,
 				AD0000000000000000000002,
 				AE0000000000000000000002 /* ClipboardTests.swift in Sources */,
 			);
@@ -566,7 +574,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
  ENABLE_USER_SCRIPT_SANDBOXING = NO;
  OTHER_LDFLAGS = ("$(inherited)", "$(BUILT_PRODUCTS_DIR)/libkeelocker_core.a", "-framework", Security, "-framework", SystemConfiguration);
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -597,7 +605,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
  ENABLE_USER_SCRIPT_SANDBOXING = NO;
  OTHER_LDFLAGS = ("$(inherited)", "$(BUILT_PRODUCTS_DIR)/libkeelocker_core.a", "-framework", Security, "-framework", SystemConfiguration);
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
