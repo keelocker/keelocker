@@ -150,7 +150,7 @@ struct RootView: View {
 
     private var workspace: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(store: store, onOpenVault: openVault)
+            SidebarView(store: store)
                 .disabled(store.hasDraft)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 242, max: 272)
         } content: {
