@@ -4,6 +4,59 @@ import Carbon
 
 @MainActor
 final class ToolbarHoverUITests: XCTestCase {
+    func testVaultFooterSettingsAndLock() {
+        vaultFooterSettingsAndLock(appearance: "light")
+    }
+
+    func testVaultFooterSettingsAndLockDark() {
+        vaultFooterSettingsAndLock(appearance: "dark")
+    }
+
+    private func vaultFooterSettingsAndLock(appearance: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-vault", "--ignore-last-vault", "-automaticallyDownloadWebsiteIcons", "NO",
+                               "-appearance", appearance]
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+
+        let name = app.descendants(matching: .any).matching(identifier: "sidebar.vaultName").firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["sidebar.vaultName"].exists)
+        let settings = app.buttons["sidebar.settings"]
+        XCTAssertTrue(settings.isHittable)
+        for (icon, button) in [("settings", settings), ("lock", app.buttons["sidebar.lock"])] {
+            name.hover()
+            let idle = button.screenshot()
+            button.hover()
+            let hovered = button.screenshot()
+            for (state, screenshot) in [("idle", idle), ("hover", hovered)] {
+                let attachment = XCTAttachment(screenshot: screenshot)
+                attachment.name = "footer-\(icon)-\(appearance)-\(state)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertNotEqual(idle.pngRepresentation, hovered.pngRepresentation,
+                              "\(icon) must visibly respond to pointer hover")
+        }
+        settings.click()
+        XCTAssertTrue(app.switches["settings.automaticWebsiteIcons"].waitForExistence(timeout: 5))
+
+        app.terminate()
+        app.launch()
+        app.activate()
+        let lock = app.buttons["sidebar.lock"]
+        XCTAssertTrue(lock.waitForExistence(timeout: 5))
+        XCTAssertTrue(lock.isHittable)
+        let footer = XCTAttachment(screenshot: app.screenshot())
+        footer.name = "vault-footer-\(appearance)"
+        footer.lifetime = .keepAlways
+        add(footer)
+        lock.click()
+        XCTAssertTrue(app.staticTexts["KeeLocker is locked"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "sidebar.vaultName").firstMatch.exists)
+    }
+
     func testRecoveryCopyAndRecycleBinNativeFlow() throws {
         try recoveryCopyAndRecycleBinNativeFlow(appearance: "light")
     }
@@ -139,7 +192,7 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Add a website to download its icon."].exists)
         app.typeKey(.escape, modifierFlags: [])
         app.buttons["Cancel"].click()
-        app.typeKey(",", modifierFlags: .command)
+        app.buttons["sidebar.settings"].click()
         let automatic = app.switches["settings.automaticWebsiteIcons"]
         XCTAssertTrue(automatic.waitForExistence(timeout: 5))
         XCTAssertFalse(["1", "on"].contains(automatic.value as? String ?? ""))
@@ -305,7 +358,7 @@ final class ToolbarHoverUITests: XCTestCase {
         password.click()
         password.typeText("fixture-password")
         app.buttons["Unlock"].click()
-        XCTAssertTrue(app.buttons["Current vault: KeeLocker Integration Vault"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "sidebar.vaultName").firstMatch.waitForExistence(timeout: 15))
         let search = app.toolbars.searchFields.firstMatch
         search.click()
         search.typeText("github")
@@ -404,7 +457,7 @@ final class ToolbarHoverUITests: XCTestCase {
         password.click()
         app.typeText("fixture-password")
         app.buttons["Unlock"].click()
-        let vault = app.buttons["Current vault: KeeLocker Integration Vault"]
+        let vault = app.descendants(matching: .any).matching(identifier: "sidebar.vaultName").firstMatch
         XCTAssertTrue(vault.waitForExistence(timeout: 15))
         XCTAssertTrue(app.toolbars.buttons["toolbar.add"].isEnabled)
         let search = app.toolbars.searchFields.firstMatch
@@ -417,7 +470,7 @@ final class ToolbarHoverUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Edit"].isEnabled)
         app.buttons["Show"].click()
         XCTAssertTrue(app.staticTexts["pässword-🔐-test"].waitForExistence(timeout: 3))
-        app.buttons["Lock vault"].click()
+        app.buttons["sidebar.lock"].click()
         XCTAssertTrue(app.staticTexts["KeeLocker is locked"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.staticTexts["developer@example.test"].exists)
     }
