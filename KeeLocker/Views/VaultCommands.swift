@@ -360,13 +360,33 @@ final class WeakGuard {
 @MainActor
 final class VaultApplicationDelegate: NSObject, NSApplicationDelegate {
     static var guards: [WeakGuard] = []
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        AppUpdater.shared.start()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        for guardView in Self.guards.compactMap(\.value) {
-            if !VaultDialogs.mayLeave(guardView.store) { return .terminateCancel }
-        }
-        for guardView in Self.guards.compactMap(\.value) { guardView.store.lock() }
+        let stores = Self.guards.compactMap(\.value).map(\.store)
+        guard Self.prepareToTerminate(stores: stores, confirm: VaultDialogs.mayLeave) else { return .terminateCancel }
         SessionQuickUnlock.shared.reset()
         return .terminateNow
+    }
+
+    /// Sparkle's quit event and ordinary Quit use the same decision. Do not
+    /// clear any window's decrypted state until every window permits leaving.
+    static func prepareToTerminate(stores: [VaultStore], confirm: (VaultStore) -> Bool) -> Bool {
+        let sessions = stores.map(\.sessionID)
+        let revisions = stores.map(\.snapshotRevision)
+        let dirtyStates = stores.map(\.isDirty)
+        for store in stores {
+            guard confirm(store) else { return false }
+        }
+        // Native confirmation dialogs run a nested event loop.
+        guard zip(stores, sessions).allSatisfy({ $0.sessionID == $1 && !$0.isBusy && !$0.hasDraft }) else { return false }
+        guard zip(stores, revisions).allSatisfy({ $0.snapshotRevision == $1 }),
+              zip(stores, dirtyStates).allSatisfy({ $0.isDirty == $1 }) else { return false }
+        for store in stores { store.lock() }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

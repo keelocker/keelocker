@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        AF1000000000000000000001 = {isa = PBXBuildFile; fileRef = BF1000000000000000000001; };
+        AF1000000000000000000002 = {isa = PBXBuildFile; productRef = EF1000000000000000000001; };
+        AF1000000000000000000003 = {isa = PBXBuildFile; fileRef = BF1000000000000000000003; };
         AE000000000000000000000D /* AttachmentExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000D; };
         AE000000000000000000000E /* AttachmentExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000E; };
         AE000000000000000000000C /* RecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE000000000000000000000C; };
@@ -65,6 +68,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+        BF1000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Updates/AppUpdater.swift; sourceTree = SOURCE_ROOT; };
+        BF1000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerTests/AppUpdateTests.swift; sourceTree = SOURCE_ROOT; };
         BE000000000000000000000D /* AttachmentExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLocker/Data/macOS/AttachmentExport.swift; sourceTree = SOURCE_ROOT; };
         BE000000000000000000000E /* AttachmentExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerTests/AttachmentExportTests.swift; sourceTree = SOURCE_ROOT; };
         BE000000000000000000000C /* RecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeeLockerTests/RecoveryTests.swift; sourceTree = SOURCE_ROOT; };
@@ -115,6 +120,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                AF1000000000000000000002,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -138,6 +144,8 @@
 		D10000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+                BF1000000000000000000001,
+                BF1000000000000000000003,
 				D10000000000000000000002 /* KeeLocker */,
 				D20000000000000000000001 /* KeeLockerTests */,
 				D30000000000000000000001 /* KeeLockerUITests */,
@@ -260,12 +268,14 @@
 				C10000000000000000000002 /* Sources */,
 				C10000000000000000000001 /* Frameworks */,
 				C10000000000000000000003 /* Resources */,
+                CF1000000000000000000001 /* Sign Sparkle */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			name = KeeLocker;
+            packageProductDependencies = (EF1000000000000000000001,);
 			productName = KeeLocker;
 			productReference = B1000000000000000000000C /* KeeLocker.app */;
 			productType = "com.apple.product-type.application";
@@ -309,8 +319,10 @@
 /* End PBXNativeTarget section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+        EF1000000000000000000002 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/sparkle-project/Sparkle"; requirement = {kind = exactVersion; version = 2.10.0; }; };
 /* End XCRemoteSwiftPackageReference section */
 /* Begin XCSwiftPackageProductDependency section */
+        EF1000000000000000000001 = {isa = XCSwiftPackageProductDependency; package = EF1000000000000000000002; productName = Sparkle; };
 /* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXProject section */
@@ -345,6 +357,7 @@
 			mainGroup = D10000000000000000000001;
 			productRefGroup = D10000000000000000000007 /* Products */;
 			projectDirPath = "";
+            packageReferences = (EF1000000000000000000002,);
 			projectRoot = "";
 			targets = (
 				E10000000000000000000001 /* KeeLocker */,
@@ -382,6 +395,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+        CF1000000000000000000001 = {isa = PBXShellScriptBuildPhase; alwaysOutOfDate = 1; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/bash; shellScript = "bash \"$SRCROOT/scripts/sign-sparkle.sh\" \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework\""; };
  CD0000000000000000000001 = {isa = PBXShellScriptBuildPhase; alwaysOutOfDate = 1; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = ("$(BUILT_PRODUCTS_DIR)/libkeelocker_core.a"); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/bash; shellScript = "bash \"$SRCROOT/scripts/build-rust.sh\""; };
 /* End PBXShellScriptBuildPhase section */
 /* Begin PBXSourcesBuildPhase section */
@@ -389,6 +403,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                AF1000000000000000000001,
 				AB0000000000000000000000,
 				AB0000000000000000000001,
 				AB0000000000000000000002,
@@ -425,6 +440,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                AF1000000000000000000003,
 				A20000000000000000000001 /* VaultStoreTests.swift in Sources */,
                 AE0000000000000000000009 /* FaviconTests.swift in Sources */,
                 AE000000000000000000000C /* RecoveryTests.swift in Sources */,
@@ -569,12 +585,14 @@
 		110000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+                CODE_SIGN_ENTITLEMENTS = KeeLocker/KeeLocker.entitlements;
+                INFOPLIST_FILE = KeeLocker/Updates/Info.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
  ENABLE_USER_SCRIPT_SANDBOXING = NO;
  OTHER_LDFLAGS = ("$(inherited)", "$(BUILT_PRODUCTS_DIR)/libkeelocker_core.a", "-framework", Security, "-framework", SystemConfiguration);
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -600,12 +618,14 @@
 		110000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+                CODE_SIGN_ENTITLEMENTS = KeeLocker/KeeLocker.entitlements;
+                INFOPLIST_FILE = KeeLocker/Updates/Info.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
  ENABLE_USER_SCRIPT_SANDBOXING = NO;
  OTHER_LDFLAGS = ("$(inherited)", "$(BUILT_PRODUCTS_DIR)/libkeelocker_core.a", "-framework", Security, "-framework", SystemConfiguration);
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;

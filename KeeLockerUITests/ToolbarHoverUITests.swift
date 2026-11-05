@@ -14,7 +14,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     private func vaultFooterSettingsAndLock(appearance: String) {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault", "--ignore-last-vault", "-automaticallyDownloadWebsiteIcons", "NO",
+        app.launchArguments = ["--disable-updates", "--demo-vault", "--ignore-last-vault", "-automaticallyDownloadWebsiteIcons", "NO",
                                "-appearance", appearance]
         app.launch()
         app.activate()
@@ -80,7 +80,7 @@ final class ToolbarHoverUITests: XCTestCase {
         try FileManager.default.copyItem(at: fixture, to: source)
         let originalBytes = try Data(contentsOf: source)
         let app = XCUIApplication()
-        app.launchArguments = ["--ignore-last-vault", "--disable-touch-id", "-automaticallyDownloadWebsiteIcons", "NO",
+        app.launchArguments = ["--disable-updates", "--ignore-last-vault", "--disable-touch-id", "-automaticallyDownloadWebsiteIcons", "NO",
                                "-appearance", appearance]
         app.launch()
         app.activate()
@@ -167,7 +167,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testWebsiteIconControlsAndSettings() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault", "--ignore-last-vault", "-automaticallyDownloadWebsiteIcons", "NO"]
+        app.launchArguments = ["--disable-updates", "--demo-vault", "--ignore-last-vault", "-automaticallyDownloadWebsiteIcons", "NO"]
         app.launch()
         app.activate()
         defer { app.terminate() }
@@ -222,7 +222,7 @@ final class ToolbarHoverUITests: XCTestCase {
         }
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault", "--ignore-last-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault", "--ignore-last-vault"]
         app.launch()
         app.activate()
         defer { app.terminate() }
@@ -280,7 +280,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testEntryIconPickerSearchSaveAndCancel() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault", "--ignore-last-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault", "--ignore-last-vault"]
         app.launch()
         app.activate()
         defer { app.terminate() }
@@ -335,7 +335,7 @@ final class ToolbarHoverUITests: XCTestCase {
         try FileManager.default.copyItem(at: fixture, to: path)
 
         let app = XCUIApplication()
-        app.launchArguments = ["--ignore-last-vault", "--disable-touch-id"]
+        app.launchArguments = ["--disable-updates", "--ignore-last-vault", "--disable-touch-id"]
         app.launch()
         app.activate()
         defer { app.terminate() }
@@ -427,7 +427,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testOpenRealVaultRetrySearchAndLock() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ignore-last-vault", "--disable-touch-id"]
+        app.launchArguments = ["--disable-updates", "--ignore-last-vault", "--disable-touch-id"]
         app.launch()
         app.activate()
         defer { app.terminate() }
@@ -481,7 +481,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testNativeToolbarActionsRespondToHover() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
         app.activate()
 
@@ -514,7 +514,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarDoesNotExposeHoverProbeToAccessibility() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let sortButton = app.menuButtons["toolbar.sort"]
@@ -527,7 +527,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarGeometryAndActions() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let sortButton = app.menuButtons["toolbar.sort"]
@@ -578,7 +578,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testListTitleLivesInsideToolbar() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let listTitle = app.toolbars.groups["toolbar.listTitle"]
@@ -591,7 +591,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testListTitleClearsSidebarToggleWhenSidebarIsHidden() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let favoritesButton = app.buttons.matching(
@@ -637,7 +637,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarSearchAlignsWithNativeActions() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch
@@ -652,7 +652,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDraggingListDividerInTitlebarResizesColumnWithoutMovingWindow() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         assertTitlebarDividerResizesColumnWithoutMovingWindow(
@@ -682,7 +682,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDraggingListDividerInTitlebarWhenSidebarIsHidden() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let sidebarToggle = app.toolbars.buttons.firstMatch
@@ -697,7 +697,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDraggingSidebarDividerInTitlebarResizesColumnWithoutMovingWindow() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         assertTitlebarDividerResizesColumnWithoutMovingWindow(
@@ -708,7 +708,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testDividerClickClearsSearchFocus() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch
@@ -738,7 +738,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testWindowCanMoveAfterDividerHitsMaximumWidth() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let window = app.windows.firstMatch
@@ -814,7 +814,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testNativeToolbarSearchClearAndEscape() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch
@@ -841,7 +841,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarSearchKeepsFocusWhenFilteringHidesCurrentSelection() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch
@@ -863,7 +863,7 @@ final class ToolbarHoverUITests: XCTestCase {
 
     func testToolbarSearchKeepsFocusWhenFilteringHasNoResults() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo-vault"]
+        app.launchArguments = ["--disable-updates", "--demo-vault"]
         app.launch()
 
         let searchField = app.toolbars.searchFields.firstMatch

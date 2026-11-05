@@ -5,10 +5,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 MODE="${1:-help}"
-LABEL="${KEELOCKER_RELEASE_LABEL:-0.1.0-beta.1}"
+LABEL="${KEELOCKER_RELEASE_LABEL:-0.1.0-beta.3}"
 ARCHS="${KEELOCKER_RELEASE_ARCHS:-arm64 x86_64}"
 OUTPUT="${KEELOCKER_RELEASE_OUTPUT:-}"
-BUILD_NUMBER="${KEELOCKER_BUILD_NUMBER:-2}"
+BUILD_NUMBER="${KEELOCKER_BUILD_NUMBER:-3}"
 
 die() { echo "release: $*" >&2; exit 1; }
 usage() {
@@ -17,8 +17,8 @@ Usage: bash scripts/release.sh preflight|build|package APP
 Environment:
   KEELOCKER_RELEASE_OUTPUT    New absolute output directory (required except preflight)
   KEELOCKER_RELEASE_ARCHS     "arm64 x86_64" (default), arm64, or x86_64
-  KEELOCKER_RELEASE_LABEL     0.1.0-beta.1 (default), used for archive names
-  KEELOCKER_BUILD_NUMBER      2 (default), numeric CFBundleVersion
+  KEELOCKER_RELEASE_LABEL     0.1.0-beta.3 (default), used for archive names
+  KEELOCKER_BUILD_NUMBER      3 (default), numeric CFBundleVersion
 build invokes Release xcodebuild, then packages. package copies an existing Release app.
 Creates a compressed DMG containing KeeLocker.app and an Applications shortcut,
 plus SHA256SUMS.txt. No Developer ID certificate or notarization is required.
@@ -106,12 +106,42 @@ for notice in LICENSE THIRD_PARTY_NOTICES.md; do
 done
 find "$APP" -print > "$OUTPUT/bundle-files.txt"
 EXECUTABLE="$APP/Contents/MacOS/KeeLocker"
-# Rust is statically linked. Fail closed if packaging gains nested code: each such
-# component needs its own dependency, license, deployment, and inside-out signing review.
+FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+[[ "$(plist SUPublicEDKey)" == "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$ROOT/KeeLocker/Updates/Info.plist")" ]] || die "Unexpected update public key"
+[[ "$(plist SUFeedURL)" == "https://github.com/keelocker/keelocker/releases/latest/download/appcast.xml" ]] || die "Unexpected update feed"
+[[ "$(plist SURequireSignedFeed)" == true && "$(plist SUVerifyUpdateBeforeExtraction)" == true ]] || die "Unsigned updates must be rejected"
+bash "$ROOT/scripts/sign-sparkle.sh" "$FRAMEWORK"
+SPARKLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$FRAMEWORK/Resources/Info.plist")"
+python3 - "$ROOT" "$SPARKLE_VERSION" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+resolved = json.loads((root / "KeeLocker.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved").read_text())
+version = next(pin["state"]["version"] for pin in resolved["pins"] if pin["identity"] == "sparkle")
+if version != sys.argv[2] or not (root / "licenses" / f"Sparkle-{version}.txt").is_file():
+    sys.exit("Unexpected Sparkle version or missing license")
+PY
+# Admit only the pinned framework's reviewed binaries.
 while IFS= read -r -d '' item; do
     description="$(file -b "$item")"
     if [[ "$description" == *Mach-O* && "$item" != "$EXECUTABLE" ]]; then
-        die "Unexpected nested Mach-O code: $item"
+        case "$item" in
+            "$FRAMEWORK/Versions/B/Sparkle"|"$FRAMEWORK/Versions/B/Autoupdate"|\
+            "$FRAMEWORK/Versions/B/Updater.app/Contents/MacOS/Updater"|\
+            "$FRAMEWORK/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"|\
+            "$FRAMEWORK/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer")
+                for arch in $ARCHS; do lipo "$item" -verify_arch "$arch"; done
+                dependencies="$(otool -L "$item")"
+                while IFS= read -r dependency; do
+                    case "$dependency" in
+                        /System/Library/*|/usr/lib/*|@rpath/Sparkle.framework/Versions/B/Sparkle) ;;
+                        *) die "Unexpected Sparkle dependency: $dependency" ;;
+                    esac
+                done < <(awk '/^\t/ { print $1 }' <<< "$dependencies")
+                ;;
+            *) die "Unexpected nested Mach-O code: $item" ;;
+        esac
     fi
 done < <(find "$APP" -type f -print0)
 lipo -archs "$EXECUTABLE" > "$OUTPUT/architectures.txt"
@@ -130,23 +160,25 @@ done <<< "$min_versions"
 otool -L "$EXECUTABLE" > "$OUTPUT/libraries.txt"
 while IFS= read -r dependency; do
     case "$dependency" in
-        /System/Library/*|/usr/lib/*) ;;
+        /System/Library/*|/usr/lib/*|@rpath/Sparkle.framework/Versions/B/Sparkle) ;;
         *) die "Non-system dynamic dependency needs review: $dependency" ;;
     esac
 done < <(awk '/^\t/ { print $1 }' "$OUTPUT/libraries.txt")
 
 # An ad-hoc integrity seal is needed for Apple Silicon. It does not identify a
 # developer or provide notarization, and distribution requires no certificate.
-codesign --force --sign - --options runtime --timestamp=none "$APP"
+codesign --force --sign - --options runtime --timestamp=none --entitlements "$ROOT/KeeLocker/KeeLocker.entitlements" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP" 2> "$OUTPUT/signature-verify.txt"
 codesign --display --verbose=4 "$APP" 2> "$OUTPUT/signature.txt"
 grep -Eq 'flags=.*\(.*runtime' "$OUTPUT/signature.txt" || die "Hardened runtime missing"
 codesign --display --entitlements :- "$APP" > "$OUTPUT/entitlements.plist" 2> "$OUTPUT/entitlements-log.txt"
-if [[ -s "$OUTPUT/entitlements.plist" ]]; then
-    # This app needs no distribution entitlements or hardened-runtime exceptions.
-    entitlements="$(plutil -convert xml1 -o - "$OUTPUT/entitlements.plist")"
-    [[ "$entitlements" != *'<key>'* ]] || die "Unexpected entitlements require review"
-fi
+python3 - "$ROOT/KeeLocker/KeeLocker.entitlements" "$OUTPUT/entitlements.plist" <<'PY'
+import plistlib
+import sys
+with open(sys.argv[1], 'rb') as source, open(sys.argv[2], 'rb') as signed:
+    if plistlib.load(source) != plistlib.load(signed):
+        sys.exit("Unexpected distribution entitlements")
+PY
 ARCH_LABEL="${ARCHS// /-}"
 if [[ "$ARCHS" == "arm64 x86_64" ]]; then ARCH_LABEL=universal; fi
 DMG_NAME="KeeLocker-$LABEL-$ARCH_LABEL.dmg"

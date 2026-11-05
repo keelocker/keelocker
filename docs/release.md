@@ -7,7 +7,7 @@ This distribution method does not require an Apple Developer account.
 
 ## Version and build
 
-The first candidate is `0.1.0-beta.1`, build `2`. The Xcode app version remains
+The first updater-enabled candidate is `0.1.0-beta.3`, build `3`. The Xcode app version remains
 numeric (`0.1.0`); the beta label belongs in the tag and DMG name. Increase the
 build number when replacing a candidate with fixes. The Rust crate version is
 independent of the app version.
@@ -26,7 +26,7 @@ installed. Apply the host wrapper, such as RTK, when required.
 ```sh
 bash scripts/release.sh preflight
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
-env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta1-dmg bash scripts/release.sh build
+env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta3-dmg bash scripts/release.sh build
 ```
 
 The default is universal (`arm64 x86_64`). Set `KEELOCKER_RELEASE_ARCHS=arm64`
@@ -35,16 +35,19 @@ directory. Set `KEELOCKER_RELEASE_LABEL` and `KEELOCKER_BUILD_NUMBER` to match
 the candidate when they differ from the script defaults.
 
 The script builds Release, packages `KeeLocker.app` with an Applications link,
-and creates `KeeLocker-0.1.0-beta.1-universal.dmg` and `SHA256SUMS.txt`. It checks
+and creates `KeeLocker-0.1.0-beta.3-universal.dmg` and `SHA256SUMS.txt`. It checks
 the app version, architectures, deployment target, system library dependencies
 and bundled licenses. Rust is statically linked. A local integrity signature
 and hardened runtime are applied during packaging; neither is an Apple Developer
-ID signature or notarization. Build and inspection reports stay beside the DMG.
+ID signature or notarization. Sparkle's nested helpers are signed inside out.
+The approved library-validation exception permits Sparkle to load in the ad-hoc
+app while keeping Hardened Runtime enabled. Build and inspection reports stay
+beside the DMG; see [update trust and key setup](updates.md).
 
 To package an existing Release app:
 
 ```sh
-env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta1-package bash scripts/release.sh package /absolute/path/to/Release/KeeLocker.app
+env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta3-package bash scripts/release.sh package /absolute/path/to/Release/KeeLocker.app
 ```
 
 Keep its original build log and source revision. Packaging cannot establish
@@ -53,20 +56,26 @@ from a failed build.
 
 ## GitHub release assets
 
-After approval, a maintainer publishes the release for the reviewed tag, such as
-`v0.1.0-beta.1`, using the [changelog](../CHANGELOG.md) as release-note material.
-The [release workflow](../.github/workflows/release.yml) checks out that tag,
-uses the same pinned Xcode installation as CI and builds the universal DMG.
-It uploads only the `.dmg` and `SHA256SUMS.txt` to that published release,
-downloads them again to a fresh directory and verifies the checksum.
-Draft creation, commits and pull requests do not publish assets. No signing
-certificates or additional repository secrets are needed.
+After approval, a maintainer creates a tag and a **draft** release for the reviewed
+revision, such as `0.1.0-beta.3`, using the [changelog](../CHANGELOG.md) for notes.
+Keep the release unpublished. Run **Actions → Release DMG → Run workflow** from
+the reviewed workflow revision and supply that tag. The workflow checks out the
+tag, uses the same pinned Xcode as CI and builds the universal DMG.
+It uploads the `.dmg`, `SHA256SUMS.txt` and signed `appcast.xml`, then downloads
+and verifies every asset before publishing the draft. Only a completed stable
+release becomes latest; beta tags require a prerelease draft. The previous update
+feed stays available during preparation and failed uploads.
+The feed uses version-tagged URLs and embeds the draft's notes. No Apple
+signing certificate is needed. Configure the existing production key as Actions
+secret `SPARKLE_PRIVATE_KEY` first, following [updates](updates.md).
 
 The workflow obtains the release label from the tag and the numeric build
 number from the Xcode project. It uses the workflow's repository token for the
-asset upload. It does not create releases or replace existing assets; inspect
-failed runs before retrying. Publishing an approved stable release remains a
-maintainer action.
+asset upload and final publication. It does not create release drafts or replace
+assets. A rerun resumes from the uploaded DMG instead of substituting a rebuilt
+archive; checksum/feed mismatches or changed notes require inspection. Starting
+this workflow authorizes publication of that specific draft. Merely creating a
+draft, commit or pull request does not publish anything.
 
 ## Verify the downloadable artifact
 

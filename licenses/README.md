@@ -1,5 +1,11 @@
 # License text provenance
 
+The exact Sparkle distribution license (including its bundled third-party
+notices) is retained in `Sparkle-2.10.0.txt`, copied from the SPM binary artifact
+for the version and source revision pinned in the Xcode workspace's
+`Package.resolved`. The notices generator includes this text in the bundled
+`THIRD_PARTY_NOTICES.md`; replace the fallback when updating Sparkle.
+
 Cargo archives normally include their own license texts. These fallbacks cover
 archives that omit them; `scripts/generate-notices.py` fails if any other missing
 text appears after a dependency update.

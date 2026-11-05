@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct KeeLockerApp: App {
     @NSApplicationDelegateAdaptor(VaultApplicationDelegate.self) private var delegate
+    @StateObject private var updates = AppUpdater.shared
     @AppStorage("appearance") private var appearanceRawValue = AppearanceChoice.system.rawValue
     @FocusedValue(\.createVaultItem) private var createVaultItem
     @FocusedValue(\.createVaultGroup) private var createVaultGroup
@@ -24,6 +25,11 @@ struct KeeLockerApp: App {
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…", action: updates.checkForUpdates)
+                    .disabled(!updates.canCheckForUpdates)
+                    .accessibilityIdentifier("app.checkForUpdates")
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Open Vault…") { openVault?() }
                     .disabled(openVault == nil)

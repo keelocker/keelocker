@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject private var updates = AppUpdater.shared
     @AppStorage("appearance") private var appearanceRawValue = AppearanceChoice.system.rawValue
     @AppStorage("concealUsernames") private var concealUsernames = false
     @AppStorage("clearClipboard") private var clearClipboard = true
@@ -43,6 +44,30 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Automatically check for updates", isOn: Binding(
+                    get: { updates.automaticallyChecksForUpdates },
+                    set: updates.setAutomaticallyChecksForUpdates
+                ))
+                .accessibilityIdentifier("settings.automaticUpdates")
+                Button("Check for Updates…", action: updates.checkForUpdates)
+                    .disabled(!updates.canCheckForUpdates)
+                if let lastCheck = updates.lastCheck {
+                    LabeledContent("Last checked") {
+                        Text(lastCheck, format: .dateTime.month().day().hour().minute())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let failure = updates.startupFailure {
+                    Text(failure).foregroundStyle(.red)
+                    Link("GitHub Releases", destination: URL(string: "https://github.com/keelocker/keelocker/releases")!)
+                }
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text("Download signed updates from GitHub. Installation replaces this copy of KeeLocker and restarts the app when you’re ready.")
+            }
+
+            Section {
                 LabeledContent("Storage", value: "Encrypted KDBX files")
                 LabeledContent("Version", value: appVersion)
             } header: {
@@ -53,6 +78,6 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(8)
-        .frame(width: 470, height: 480)
+        .frame(width: 470, height: 640)
     }
 }
