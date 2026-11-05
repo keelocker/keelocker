@@ -62,7 +62,7 @@ print(key.publicKey.rawRepresentation.base64EncodedString())
         feed.ROOT = directory / "fixture"
         event = {"repository": {"full_name": "keelocker/keelocker"}, "release": {
             "tag_name": f"v{label}", "draft": True, "prerelease": False,
-            "body": "## Synthetic update\n\nSigned release notes, tested without production credentials."}}
+            "body": "## Synthetic update\r\n\r\n- Signed release notes\r\n- Обновление & fixes\r\n\r\nTested without production credentials."}}
         original_secret = os.environ.get("SPARKLE_PRIVATE_KEY")
         try:
             os.environ["SPARKLE_PRIVATE_KEY"] = seed.read_text()
