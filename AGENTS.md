@@ -6,6 +6,7 @@
 
 - Preserve the existing native macOS design. Change layout, colors, typography or toolbar structure only when the task explicitly calls for it; follow [DESIGN.md](DESIGN.md) for UI work.
 - Keep the boundary `SwiftUI → VaultStore → VaultRepository`. Confine Rust DTOs and UniFFI calls to `KeeLocker/Data/Rust`; give views application models and capabilities rather than concrete repository checks.
+- Keep app updates in `KeeLocker/Updates` using pinned Sparkle. Require signed HTTPS feeds and archives with the embedded public key; keep private signing keys in Keychain/CI secrets. Route restarts through normal Quit guards. Publish release drafts only after asset readback; resume from exact uploaded archives without replacement. Preserve inside-out signing and the approved library-validation exception for ad-hoc distribution; follow [updates](docs/updates.md).
 - Use the existing `keepass` library for KDBX parsing, encryption and KDFs. Preserve the workspace's vendored patch; read its rationale before changing or replacing it.
 - Keep file/crypto work off the main thread. Bind asynchronous results and delayed dialogs to their originating session; cancellation alone does not stop a Rust call. Verify the opened vault descriptor matches the captured canonical path before and after reading. Admit one open per canonical path across adapters, coalesce waiting retries and release admission only after late-session cleanup.
 - Use synthetic vaults and temporary copies for tests and manual checks. Keep real passwords, key files, decrypted data and user vaults out of logs, preferences, fixtures and commits. The remembered vault path is the intended preferences exception.
@@ -34,6 +35,8 @@ cargo clippy --locked -p keelocker-core --all-targets -- -D warnings
 bash scripts/check-bindings.sh
 python3 scripts/generate-notices.py --check
 bash scripts/release.sh preflight
+python3 scripts/test-update-feed.py
+python3 scripts/test-release-publication.py
 xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/keelocker-derived build
 xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/keelocker-derived -only-testing:KeeLockerTests test
 ```
@@ -55,3 +58,4 @@ Read the relevant topic before modifying its code; there is no need to load the 
 | Change Touch ID, cached key material or authentication lifetime | [Session Quick Unlock](docs/touch-id.md), [QuickUnlockTests.swift](KeeLockerTests/QuickUnlockTests.swift) |
 | Change dependencies, license notices or contribution/security policy | [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [notice provenance](licenses/README.md), development guide |
 | Build a release DMG, publish assets or verify installation | [Release procedure](docs/release.md), [release workflow](.github/workflows/release.yml) |
+| Change update UI, signing, feed publication or restart | [App updates](docs/updates.md), [AppUpdateTests.swift](KeeLockerTests/AppUpdateTests.swift) |

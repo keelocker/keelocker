@@ -98,6 +98,10 @@ jobs:
           persist-credentials: false
       - name: Require selected Xcode
         run: xcodebuild -version
+      - name: Validate update release metadata
+        run: python3 scripts/test-update-feed.py
+      - name: Draft publication and interrupted-upload regressions
+        run: python3 scripts/test-release-publication.py
       - name: Install Rust and Apple Silicon target
         run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin
       - name: Compare generated bindings with exported API

@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0-beta.1, build 2 (unreleased candidate)
+## 0.1.0-beta.3, build 3 (unreleased candidate)
+
+- Check for signed updates from the app menu or Settings, view release notes, and install over the current app with a guarded restart.
+
+## 0.1.0-beta.1, build 2
 
 First beta of KeeLocker for macOS. Use copied vaults and keep an independent backup.
 

@@ -29,6 +29,13 @@ normally. See [Apple's instructions](https://support.apple.com/guide/mac-help/op
 The download includes Apple Silicon and Intel builds in one app and requires
 macOS 14 or newer. Check the release notes for the systems actually tested.
 
+Use **KeeLocker → Check for Updates…** to download and install a signed update
+from GitHub Releases. The native window shows release notes and download
+progress, then replaces this app and relaunches when you choose to install.
+Settings → Updates controls automatic checks. Install the first build containing
+the updater manually; no paid Apple account is required. See
+[updates](docs/updates.md) for signing and first-release availability.
+
 ## Use
 
 Open a `.kdbx` with **File → Open** (⌘O), then enter its password and optional key

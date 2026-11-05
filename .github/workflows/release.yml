@@ -1,14 +1,18 @@
 name: Release DMG
 
 "on":
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag and release draft to build, verify and publish
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: keelocker-release
   cancel-in-progress: false
 
 defaults:
@@ -26,11 +30,11 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       RUSTUP_TOOLCHAIN: stable
       KEELOCKER_RELEASE_ARCHS: arm64 x86_64
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ github.event.release.tag_name }}
+          ref: refs/tags/${{ inputs.tag }}
           persist-credentials: false
       - name: Resolve candidate version
         run: |
@@ -45,19 +49,23 @@ jobs:
           echo "KEELOCKER_RELEASE_OUTPUT=$RUNNER_TEMP/keelocker-release" >> "$GITHUB_ENV"
       - name: Require selected Xcode
         run: xcodebuild -version
+      - name: Require update signing key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: test -n "$SPARKLE_PRIVATE_KEY"
       - name: Install Rust and both macOS targets
         run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin --target x86_64-apple-darwin
       - name: Fetch locked dependency sources for notices
         run: cargo fetch --locked
       - name: Build and inspect universal DMG
         run: bash scripts/release.sh build
-      - name: Upload and verify release assets
+      - name: Verify draft assets and publish
         env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          gh release upload "$RELEASE_TAG" "$KEELOCKER_RELEASE_OUTPUT"/*.dmg "$KEELOCKER_RELEASE_OUTPUT/SHA256SUMS.txt"
-          download_dir="$(mktemp -d "$RUNNER_TEMP/keelocker-download.XXXXXX")"
-          gh release download "$RELEASE_TAG" --pattern "KeeLocker-$KEELOCKER_RELEASE_LABEL-universal.dmg" --pattern SHA256SUMS.txt --dir "$download_dir"
-          cd "$download_dir"
-          shasum -a 256 -c SHA256SUMS.txt
+        run: >-
+          python3 scripts/publish-update.py
+          --release-dir "$KEELOCKER_RELEASE_OUTPUT"
+          --tools "$KEELOCKER_RELEASE_OUTPUT/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
+          --tag "$RELEASE_TAG"

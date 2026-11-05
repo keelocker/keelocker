@@ -66,6 +66,17 @@ def render():
         "| --- | --- | --- |",
         *rows, "",
     ]
+    resolved = json.loads((ROOT / "KeeLocker.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved").read_text())
+    sparkle = next(pin for pin in resolved["pins"] if pin["identity"] == "sparkle")
+    version = sparkle["state"]["version"]
+    notice = ROOT / "licenses" / f"Sparkle-{version}.txt"
+    lines.extend([
+        "## Sparkle update framework", "",
+        f'Sparkle {version}, pinned at {sparkle["state"]["revision"]} in Package.resolved.',
+        f'Source: https://github.com/sparkle-project/Sparkle/tree/{sparkle["state"]["revision"]}.',
+        "Includes the upstream MIT license and bundled third-party notices.", "",
+        "```text", "\n".join(line.rstrip() for line in notice.read_text(encoding="utf-8").strip().splitlines()), "```", "",
+    ])
     for digest, content in sorted(texts.items()):
         lines.extend([f'<a id="license-{digest}"></a>', "", f"## License / notice {digest}", "", "```text", content, "```", ""])
     return "\n".join(lines)

@@ -34,6 +34,12 @@ do not imply a byte-for-byte reproducible environment.
 
 ## Choose verification by changed behavior
 
+For app updates run `AppUpdateTests`, `ClipboardTests`,
+`python3 scripts/test-update-feed.py`, `python3 scripts/test-release-publication.py`,
+the notices check and Release packaging.
+Check native update UI, signed-feed/modified-archive rejection, restart
+cancellation and replacement at the same path using [updates](updates.md).
+
 | Change | Required evidence |
 | --- | --- |
 | Store state, drafts, selection, capabilities or async lifecycle | Swift unit/store tests in [VaultStoreTests.swift](../KeeLockerTests/VaultStoreTests.swift); retain demo behavior and exercise delayed results around Lock/session replacement. |

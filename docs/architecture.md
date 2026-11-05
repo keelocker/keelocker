@@ -23,6 +23,12 @@ SwiftUI → VaultStore → VaultRepository
 
 The current backend is read/write. The earlier Swift KDBX integration is gone; new KDBX work belongs in Rust or its adapter. The backend selection is currently the direct `RustVaultRepository` construction in `VaultStore.openFile`, not a factory.
 
+## App updates
+
+Updates are a process-level service in `KeeLocker/Updates`, separate from vault
+state. Sparkle owns download verification and app replacement; restart uses the
+existing application termination guards. See [updates](updates.md).
+
 ## Snapshots and selected entry details
 
 Rust list snapshots omit secrets. The adapter marks their entries `isRedacted`; the selected entry and history are fetched separately with full fields. Never construct a replacement edit from a list row: an empty redacted password is not an instruction to erase the real password. `updateItem`, `saveItem` and the adapter reject redacted replacement edits.
