@@ -32,7 +32,9 @@ macOS 14 or newer. Check the release notes for the systems actually tested.
 Use **KeeLocker → Check for Updates…** to download and install a signed update
 from GitHub Releases. The native window shows release notes and download
 progress, then replaces this app and relaunches when you choose to install.
-Settings → Updates controls automatic checks. Install the first build containing
+Settings → Updates controls automatic checks and the Stable/Beta channel.
+Beta includes stable releases; returning to Stable waits for a newer stable build.
+Install the first build containing
 the updater manually; no paid Apple account is required. See
 [updates](docs/updates.md) for signing and first-release availability.
 

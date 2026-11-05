@@ -75,6 +75,17 @@ class FeedTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.validate()
 
+    def test_channel_must_match_release_lane(self):
+        data = ET.tostring(self.xml)
+        self.assertTrue(feed.validate_feed(data, self.archive, self.info, self.url, expected_channel="stable"))
+        with self.assertRaises(ValueError):
+            feed.validate_feed(data, self.archive, self.info, self.url, expected_channel="beta")
+        ET.SubElement(self.xml.find("./channel/item"), f"{{{feed.NAMESPACE}}}channel").text = "beta"
+        data = ET.tostring(self.xml)
+        self.assertTrue(feed.validate_feed(data, self.archive, self.info, self.url, expected_channel="beta"))
+        with self.assertRaises(ValueError):
+            feed.validate_feed(data, self.archive, self.info, self.url, expected_channel="stable")
+
     def test_missing_notes(self):
         item = self.xml.find("./channel/item")
         item.remove(item.find("description"))

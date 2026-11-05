@@ -10,17 +10,25 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("update_feed", ROOT / "scripts/generate-update-feed.py")
 feed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(feed)
+spec = importlib.util.spec_from_file_location("update_channels", ROOT / "scripts/update-channels.py")
+channels = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(channels)
 
 
-def gh_json(*arguments, missing_ok=False):
-    result = subprocess.run(["gh", *arguments], capture_output=True, text=True)
+def gh_json(*arguments, missing_ok=False, payload=None, method=None):
+    command = ["gh", *arguments]
+    if method:
+        command.extend(["--method", method])
+    if payload is not None:
+        command.extend(["--input", "-"])
+    result = subprocess.run(command, input=json.dumps(payload) if payload is not None else None,
+                            capture_output=True, text=True)
     if result.returncode:
         if missing_ok and "HTTP 404" in result.stderr:
             return None
@@ -135,21 +143,12 @@ def publish(release_dir, tools, tag):
             download("appcast.xml", old)
             feed.verify(tools, old / "appcast.xml")
             signature = feed.validate_feed((old / "appcast.xml").read_bytes(), archive, info,
-                f"https://github.com/{repository}/releases/download/{tag}/{archive_name}", initial["body"])
+                f"https://github.com/{repository}/releases/download/{tag}/{archive_name}", initial["body"],
+                "beta" if initial["prerelease"] else "stable")
             feed.verify(tools, archive, signature)
             shutil.copyfile(old / "appcast.xml", generated_feed)
 
-        latest = gh_json("api", f"repos/{repository}/releases/latest", missing_ok=True)
-        if latest is not None and "appcast.xml" in asset_names(latest):
-            prior = directory / "prior"
-            prior.mkdir()
-            subprocess.run(["gh", "release", "download", latest["tag_name"], "--repo", repository,
-                            "--pattern", "appcast.xml", "--dir", str(prior)], check=True)
-            feed.verify(tools, prior / "appcast.xml")
-            previous = ET.fromstring((prior / "appcast.xml").read_bytes()).findtext(
-                f"./channel/item/{{{feed.NAMESPACE}}}version")
-            if previous is None or int(info["CFBundleVersion"]) <= int(previous):
-                raise ValueError("Build number must exceed the latest stable build")
+        prepared_channels = channels.prepare(directory, tools, generated_feed, gh_json, feed)
 
         # Read back each asset. A successful upload alone is not verification.
         for file in (archive, sums, generated_feed):
@@ -169,13 +168,41 @@ def publish(release_dir, tools, tag):
         published = gh_json("api", endpoint)
         if published["draft"] or asset_names(published) != allowed:
             raise ValueError("Publication readback failed")
+        channels.publish(prepared_channels, gh_json)
     print(f"Published verified {'prerelease' if initial['prerelease'] else 'stable release'} {tag}.")
+
+
+def refresh_channels(tools, tag):
+    """Resume channel publication after a release succeeded but feed publication failed."""
+    release = gh_json("api", release_endpoint(feed.REPOSITORY, tag))
+    if release["draft"] or "appcast.xml" not in asset_names(release):
+        raise ValueError("Channel refresh requires a published release with a signed appcast")
+    with tempfile.TemporaryDirectory(prefix="keelocker-channel-refresh-") as temporary:
+        directory = Path(temporary)
+        subprocess.run(["gh", "release", "download", tag, "--repo", feed.REPOSITORY,
+                        "--pattern", "appcast.xml", "--dir", str(directory)], check=True)
+        candidate = directory / "appcast.xml"
+        feed.verify(tools, candidate)
+        entries = channels.items(candidate.read_bytes())
+        lane = "beta" if release["prerelease"] else "stable"
+        if len(entries) != 1 or lane not in entries:
+            raise ValueError("Published release channel differs from its signed appcast")
+        url = entries[lane].find("enclosure").get("url")
+        if f"/releases/download/{tag}/" not in url:
+            raise ValueError("Published appcast belongs to another tag")
+        channels.publish(channels.prepare(directory, tools, candidate, gh_json, feed), gh_json)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release-dir", type=Path, required=True)
+    parser.add_argument("--release-dir", type=Path)
     parser.add_argument("--tools", type=Path, required=True)
     parser.add_argument("--tag", required=True)
+    parser.add_argument("--refresh-channels", action="store_true", help="Retry feed publication for an already published release")
     args = parser.parse_args()
-    publish(args.release_dir.resolve(), args.tools.resolve(), args.tag)
+    if args.refresh_channels:
+        refresh_channels(args.tools.resolve(), args.tag)
+    else:
+        if args.release_dir is None:
+            parser.error("--release-dir is required when publishing a draft")
+        publish(args.release_dir.resolve(), args.tools.resolve(), args.tag)

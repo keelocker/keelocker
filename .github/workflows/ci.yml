@@ -2,6 +2,7 @@ name: CI
 
 "on":
   push:
+    branches-ignore: [updates]
   pull_request:
   workflow_dispatch:
 
@@ -102,6 +103,8 @@ jobs:
         run: python3 scripts/test-update-feed.py
       - name: Draft publication and interrupted-upload regressions
         run: python3 scripts/test-release-publication.py
+      - name: Update channel feed regressions
+        run: python3 scripts/test-update-channels.py
       - name: Install Rust and Apple Silicon target
         run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin
       - name: Compare generated bindings with exported API
@@ -112,3 +115,8 @@ jobs:
         run: xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/keelocker-derived" build
       - name: Swift unit and bridge tests
         run: xcodebuild -project KeeLocker.xcodeproj -scheme KeeLocker -destination 'platform=macOS,arch=arm64' -derivedDataPath "$RUNNER_TEMP/keelocker-derived" -only-testing:KeeLockerTests test
+      - name: Real Sparkle signatures and update channels with disposable credentials
+        run: >-
+          python3 scripts/test-update-feed-integration.py
+          --app "$RUNNER_TEMP/keelocker-derived/Build/Products/Debug/KeeLocker.app"
+          --tools "$RUNNER_TEMP/keelocker-derived/SourcePackages/artifacts/sparkle/Sparkle/bin"

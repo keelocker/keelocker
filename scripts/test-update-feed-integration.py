@@ -9,12 +9,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("feed", ROOT / "scripts/generate-update-feed.py")
 feed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(feed)
+spec = importlib.util.spec_from_file_location("channels", ROOT / "scripts/update-channels.py")
+channels = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(channels)
 
 
 def run(app, tools):
@@ -68,6 +72,24 @@ print(key.publicKey.rawRepresentation.base64EncodedString())
             os.environ["SPARKLE_PRIVATE_KEY"] = seed.read_text()
             feed.generate(release, tools, event)
             signed = (release / "appcast.xml").read_bytes()
+            stable = channels.merge(None, signed)
+            # Reuse the disposable DMG to exercise the official beta channel output.
+            (release / "appcast.xml").unlink()
+            beta_tag = f"{label}-beta.4"
+            archive.rename(release / f"KeeLocker-{beta_tag}-universal.dmg")
+            event["release"].update(tag_name=beta_tag, prerelease=True)
+            feed.generate(release, tools, event)
+            beta_signed = (release / "appcast.xml").read_bytes()
+            # A later build is required across channels. Adjust only this synthetic stable item.
+            prior = ET.fromstring(stable)
+            prior.find(f"./channel/item/{{{feed.NAMESPACE}}}version").text = str(int(info["CFBundleVersion"]) - 1)
+            merged = directory / "merged.xml"
+            merged.write_bytes(channels.merge(ET.tostring(prior), beta_signed))
+            feed.run_tool(tools, "sign_update", merged)
+            feed.verify(tools, merged)
+            if set(channels.items(merged.read_bytes())) != {"stable", "beta"}:
+                raise AssertionError("Merged signed feed lost a channel")
+            (release / f"KeeLocker-{beta_tag}-universal.dmg").rename(archive)
             signature = feed.validate_feed(signed, archive, info,
                 f"https://github.com/keelocker/keelocker/releases/download/v{label}/{archive.name}")
             tampered = directory / "tampered.dmg"
@@ -75,13 +97,13 @@ print(key.publicKey.rawRepresentation.base64EncodedString())
             with tampered.open("ab") as target:
                 target.write(b"tampered")
             changed_feed = directory / "tampered.xml"
-            changed_feed.write_bytes(signed.replace(b"Synthetic update", b"Untrusted update"))
+            changed_feed.write_bytes(merged.read_bytes().replace(b"Synthetic update", b"Untrusted update"))
             for arguments in [(tampered, signature), (changed_feed,)]:
                 result = subprocess.run([str(tools / "sign_update"), "--ed-key-file", str(seed),
                                          "--verify", *map(str, arguments)], capture_output=True)
                 if result.returncode == 0:
                     raise AssertionError("Modified signed content was accepted")
-            print("PASS: generated feed, matching app key, archive and feed signatures; tampering rejected.")
+            print("PASS: CRLF notes, stable/beta feeds, signed merged channels and archive signatures; tampering rejected.")
         finally:
             feed.ROOT = original_root
             if original_secret is None:

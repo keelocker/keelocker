@@ -25,6 +25,8 @@ generated bindings, runs Rust tests on the native filesystem, builds the app and
 and native fingerprint authentication require host automation/hardware support
 and are outside the hosted workflow. A green unit-test job does not prove those
 checks passed.
+It also generates and merges Stable/Beta feeds using the pinned Sparkle tools
+and a disposable signing key, and checks rejection of modified signed content.
 
 Actions use full commit SHA pins and a read-only repository token. No signing,
 publishing or release credentials are needed. Dependencies resolve through
@@ -36,9 +38,12 @@ do not imply a byte-for-byte reproducible environment.
 
 For app updates run `AppUpdateTests`, `ClipboardTests`,
 `python3 scripts/test-update-feed.py`, `python3 scripts/test-release-publication.py`,
+`python3 scripts/test-update-channels.py`,
 the notices check and Release packaging.
 Check native update UI, signed-feed/modified-archive rejection, restart
 cancellation and replacement at the same path using [updates](updates.md).
+Check Stable/Beta selection, persistence, a beta-only feed, increasing builds
+across lanes and feed-publication retry separately from release-asset retry.
 
 | Change | Required evidence |
 | --- | --- |

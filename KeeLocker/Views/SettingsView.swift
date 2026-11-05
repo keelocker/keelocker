@@ -44,6 +44,18 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("Update channel", selection: Binding(get: { updates.channel }, set: updates.setChannel)) {
+                    ForEach(UpdateChannel.allCases) { channel in
+                        Text(channel.title).tag(channel)
+                    }
+                }
+                .disabled(!updates.canChangeChannel)
+                .accessibilityIdentifier("settings.updateChannel")
+                Text(updates.channel == .beta
+                     ? "Receive stable releases and beta versions. Beta versions may contain unfinished features."
+                     : "Receive stable releases only. Switching from Beta waits for a newer stable release.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Automatically check for updates", isOn: Binding(
                     get: { updates.automaticallyChecksForUpdates },
                     set: updates.setAutomaticallyChecksForUpdates

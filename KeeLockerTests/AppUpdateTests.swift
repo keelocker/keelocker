@@ -3,6 +3,29 @@ import XCTest
 
 @MainActor
 final class AppUpdateTests: XCTestCase {
+    func testUpdateChannelDefaultsAndFiltering() {
+        XCTAssertEqual(UpdateChannel.resolve(saved: nil, bundled: "stable"), .stable)
+        XCTAssertEqual(UpdateChannel.resolve(saved: nil, bundled: "beta"), .beta)
+        XCTAssertEqual(UpdateChannel.resolve(saved: "stable", bundled: "beta"), .stable)
+        XCTAssertEqual(UpdateChannel.resolve(saved: "beta", bundled: "stable"), .beta)
+        XCTAssertEqual(UpdateChannel.resolve(saved: "unknown", bundled: "unknown"), .stable)
+        XCTAssertTrue(UpdateChannel.stable.allowedChannels.isEmpty)
+        XCTAssertEqual(UpdateChannel.beta.allowedChannels, ["beta"])
+    }
+
+    func testUpdateChannelPreferenceSurvivesRestartAndNewBuildDefault() throws {
+        let name = "com.keelocker.update-tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let updater = AppUpdater(defaults: defaults, bundledChannel: "beta")
+        XCTAssertEqual(updater.channel, .beta)
+        updater.setChannel(.stable)
+        XCTAssertEqual(defaults.string(forKey: "updateChannel"), "stable")
+        XCTAssertEqual(AppUpdater(defaults: defaults, bundledChannel: "beta").channel, .stable)
+        updater.setChannel(.beta)
+        XCTAssertEqual(AppUpdater(defaults: defaults, bundledChannel: "stable").channel, .beta)
+    }
+
     func testCancelledRestartLeavesEveryVaultUnlocked() async {
         let first = await openedStore()
         let second = await openedStore()
@@ -79,7 +102,7 @@ final class AppUpdateTests: XCTestCase {
     func testUpdateConfigurationRequiresAuthenticatedFeedAndArchive() throws {
         let bundle = Bundle(for: VaultStore.self)
         let info = try XCTUnwrap(bundle.infoDictionary)
-        XCTAssertEqual(info["SUFeedURL"] as? String, "https://github.com/keelocker/keelocker/releases/latest/download/appcast.xml")
+        XCTAssertEqual(info["SUFeedURL"] as? String, "https://raw.githubusercontent.com/keelocker/keelocker/updates/appcast.xml")
         let key = try XCTUnwrap(info["SUPublicEDKey"] as? String)
         XCTAssertEqual(Data(base64Encoded: key)?.count, 32)
         XCTAssertEqual(info["SUVerifyUpdateBeforeExtraction"] as? Bool, true)

@@ -14,13 +14,33 @@ interaction tests. A manual update smoke test uses its own temporary bundle ID.
 
 ## Trust and distribution
 
-The feed is a GitHub Release asset at
-`https://github.com/keelocker/keelocker/releases/latest/download/appcast.xml`.
+The feed is the signed `appcast.xml` on the dedicated `updates` branch at
+`https://raw.githubusercontent.com/keelocker/keelocker/updates/appcast.xml`.
+The branch contains only the feed and is maintained by the release workflow.
+It does not depend on GitHub's latest stable release redirect.
 Each item points to an immutable version-tagged universal DMG in the same
 repository. Both feed and archive require Ed25519 signatures. Validation occurs
 before archive extraction, and signed-feed validation never expires into an
 unsigned fallback. The public key lives in `KeeLocker/Updates/Info.plist`.
 Private keys must never enter source, app bundles, logs or release artifacts.
+
+## Update channels
+
+Settings → Updates → Update channel offers **Stable** and **Beta**. Stable
+accepts only Sparkle's default channel; Beta also permits `sparkle:channel=beta`.
+The feed retains the newest stable item and newest beta item. Before the first
+stable release, a valid beta-only feed yields no update for Stable users.
+Switching back to Stable never downgrades the app: Sparkle waits for a higher
+numeric build. Installation always requires user action.
+
+The selection persists in `updateChannel` preferences and overrides future
+build defaults. `KeeLockerDefaultUpdateChannel` supplies the initial choice:
+release packaging derives it from the tag, and local Debug builds default to
+Beta. Changing channels is disabled during an active Sparkle interaction, and
+resets the scheduled check cycle without starting an installation.
+
+Builds predating this URL and selector need one manual installation. Do not
+promote a beta to stable merely to repair the old `latest` URL.
 
 This distribution uses ad-hoc signatures without Developer ID or notarization.
 Hardened Runtime remains enabled in packaged releases, with the explicitly
@@ -79,17 +99,20 @@ use the same comparison.
 Create a reviewed tag and a release draft with nonempty notes and an increased
 numeric `CFBundleVersion`. Keep the release as a draft. In Actions, run
 **Release DMG** from the reviewed workflow revision and enter the tag. The workflow
-builds that exact tag, signs and verifies its assets, downloads each uploaded
+builds that exact tag, uses publishing scripts from the selected workflow
+revision, signs and verifies its assets, downloads each uploaded
 asset for comparison, then publishes the draft. A stable release becomes latest
 only after all three assets are ready; a beta remains a prerelease. A beta tag
 must have the prerelease checkbox enabled, and a stable tag must not.
 
-No extra hosting service is needed. The `latest` endpoint follows GitHub's
-latest stable release; beta releases do not replace that feed. Before the first
-stable updater-enabled release, manual production checks may report an unavailable
-feed. Build numbers must increase across releases, including betas; changing only
-the marketing version does not trigger an update. The publisher compares the
-candidate build against the previous stable signed feed when one exists.
+After release publication and asset readback, the publisher commits the signed
+merged appcast to `updates` and reads back its exact bytes. The previous feed's
+signature is verified before retaining either channel. Branch creation is atomic;
+subsequent writes require the previously read blob SHA. A concurrent write fails
+instead of silently replacing another candidate. Build numbers must increase
+across both channels; changing only the marketing version does not trigger an
+update. Release archives and their per-release appcasts remain immutable assets.
+The shared feed can change and is re-signed after every merge.
 
 If an upload fails, rerun the workflow with the same draft/tag. Existing assets
 are never overwritten: it downloads the exact uploaded DMG, checks its embedded
@@ -98,10 +121,22 @@ checksums and feeds are verified before reuse. Unexpected/incomplete asset recor
 changed notes, another build number or a signature mismatch stop publication for
 maintainer inspection. Do not manually publish a partially prepared draft.
 
+If the release is already published but channel publication failed, run
+**Release DMG** from the corrected workflow revision with the same tag and
+**Only retry channel feed publication** enabled. This verifies the existing
+release appcast, merges and signs the channel feed, and performs no release asset
+uploads or rebuild. An identical retry is a no-op; changed content at the same
+build or an older candidate is rejected. This mode requires a release appcast
+with the correct channel; older beta appcasts without a beta marker are rejected.
+The existing `SPARKLE_PRIVATE_KEY` and workflow `contents: write` token suffice;
+no extra account or hosting setup is required. The workflow creates `updates`
+on its first successful publication. The feed is unavailable until that point.
+
 ## Verification and rollback
 
 Run Swift `AppUpdateTests` and clipboard tests, `python3
 scripts/test-update-feed.py`, `python3 scripts/test-release-publication.py`,
+`python3 scripts/test-update-channels.py`,
 the notices check and Release packaging. Verify
 packaged entitlements, nested signatures and dependency inventory. Sparkle's
 tools must reject a changed archive and a changed signed feed.
@@ -125,9 +160,10 @@ on a clean Mac separately; a build-machine check is narrower evidence.
 For an isolated test feed, modify and re-sign only temporary app copies; never
 weaken production HTTPS or signature settings.
 
-An interrupted draft does not replace the previous latest release. Inspect a
+An interrupted draft does not replace the channel feed. Inspect a
 failed publication readback before retrying; an already published release is
 rejected rather than silently modified. To withdraw a bad published version,
-move latest back to the previous compatible release; installed newer builds will not downgrade.
+publish a reviewed, re-signed channel feed pointing to the previous compatible
+release; installed newer builds will not downgrade.
 Repair with a higher build number. Code rollback needs no vault migration.
 Do not overwrite existing release assets or regenerate production keys as a retry.

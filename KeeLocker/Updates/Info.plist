@@ -3,7 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>SUFeedURL</key>
-    <string>https://github.com/keelocker/keelocker/releases/latest/download/appcast.xml</string>
+    <string>https://raw.githubusercontent.com/keelocker/keelocker/updates/appcast.xml</string>
+    <key>KeeLockerDefaultUpdateChannel</key>
+    <string>$(KEELOCKER_UPDATE_CHANNEL)</string>
     <key>SUPublicEDKey</key>
     <string>RgqQr4uqhiGDGScyzOo5UXsuzgBOkhoomCyf0eAj0cw=</string>
     <key>SUEnableAutomaticChecks</key>

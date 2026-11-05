@@ -7,7 +7,7 @@ This distribution method does not require an Apple Developer account.
 
 ## Version and build
 
-The first updater-enabled candidate is `0.1.0-beta.3`, build `3`. The Xcode app version remains
+The channel-selector candidate is `0.1.0-beta.4`, build `4`. The Xcode app version remains
 numeric (`0.1.0`); the beta label belongs in the tag and DMG name. Increase the
 build number when replacing a candidate with fixes. The Rust crate version is
 independent of the app version.
@@ -26,7 +26,7 @@ installed. Apply the host wrapper, such as RTK, when required.
 ```sh
 bash scripts/release.sh preflight
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
-env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta3-dmg bash scripts/release.sh build
+env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta4-dmg bash scripts/release.sh build
 ```
 
 The default is universal (`arm64 x86_64`). Set `KEELOCKER_RELEASE_ARCHS=arm64`
@@ -35,7 +35,7 @@ directory. Set `KEELOCKER_RELEASE_LABEL` and `KEELOCKER_BUILD_NUMBER` to match
 the candidate when they differ from the script defaults.
 
 The script builds Release, packages `KeeLocker.app` with an Applications link,
-and creates `KeeLocker-0.1.0-beta.3-universal.dmg` and `SHA256SUMS.txt`. It checks
+and creates `KeeLocker-0.1.0-beta.4-universal.dmg` and `SHA256SUMS.txt`. It checks
 the app version, architectures, deployment target, system library dependencies
 and bundled licenses. Rust is statically linked. A local integrity signature
 and hardened runtime are applied during packaging; neither is an Apple Developer
@@ -47,7 +47,7 @@ beside the DMG; see [update trust and key setup](updates.md).
 To package an existing Release app:
 
 ```sh
-env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta3-package bash scripts/release.sh package /absolute/path/to/Release/KeeLocker.app
+env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta4-package bash scripts/release.sh package /absolute/path/to/Release/KeeLocker.app
 ```
 
 Keep its original build log and source revision. Packaging cannot establish
@@ -57,14 +57,20 @@ from a failed build.
 ## GitHub release assets
 
 After approval, a maintainer creates a tag and a **draft** release for the reviewed
-revision, such as `0.1.0-beta.3`, using the [changelog](../CHANGELOG.md) for notes.
+revision, such as `0.1.0-beta.4`, using the [changelog](../CHANGELOG.md) for notes.
 Keep the release unpublished. Run **Actions → Release DMG → Run workflow** from
 the reviewed workflow revision and supply that tag. The workflow checks out the
-tag, uses the same pinned Xcode as CI and builds the universal DMG.
+tag, uses publishing scripts from the selected workflow revision, uses the same
+pinned Xcode as CI and builds the universal DMG. Packaging sets the initial
+channel to Beta for prerelease tags and Stable for stable tags.
 It uploads the `.dmg`, `SHA256SUMS.txt` and signed `appcast.xml`, then downloads
 and verifies every asset before publishing the draft. Only a completed stable
 release becomes latest; beta tags require a prerelease draft. The previous update
-feed stays available during preparation and failed uploads.
+feed stays available during preparation and failed uploads. After publication,
+the workflow commits the merged signed Stable/Beta feed to the `updates` branch
+and verifies its bytes. This branch is created on first publication and needs
+no separate hosting setup. If that final step fails, rerun with **Only retry
+channel feed publication** enabled for the same published tag. See [updates](updates.md).
 The feed uses version-tagged URLs and embeds the draft's notes. No Apple
 signing certificate is needed. Configure the existing production key as Actions
 secret `SPARKLE_PRIVATE_KEY` first, following [updates](updates.md).
