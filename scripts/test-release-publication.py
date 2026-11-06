@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +29,14 @@ class WorkflowTests(unittest.TestCase):
 
 
 class DraftLookupTests(unittest.TestCase):
+    def test_api_payload_uses_stdin_with_explicit_put_method(self):
+        payload = {"branch": "updates", "sha": "old-blob", "content": "signed-feed"}
+        result = subprocess.CompletedProcess([], 0, "{}", "")
+        with patch.object(publication.subprocess, "run", return_value=result) as run:
+            publication.gh_json("api", "repos/keelocker/keelocker/contents/appcast.xml", method="PUT", payload=payload)
+        self.assertEqual(run.call_args.args[0][-4:], ["--method", "PUT", "--input", "-"])
+        self.assertEqual(json.loads(run.call_args.kwargs["input"]), payload)
+
     def test_draft_lookup_uses_cli_and_subsequent_reads_use_database_id(self):
         result = subprocess.CompletedProcess([], 0, json.dumps({"databaseId": 42}), "")
         with patch.object(publication.subprocess, "run", return_value=result) as run:
@@ -108,6 +117,8 @@ class PublicationTests(unittest.TestCase):
         with patch.object(publication, "gh_json", side_effect=self.gh), \
              patch.object(publication.subprocess, "run", side_effect=self.run_command), \
              patch.object(publication.feed, "generate", side_effect=self.generate), \
+             patch.object(publication.channels, "prepare"), \
+             patch.object(publication.channels, "publish"), \
              patch.object(publication.feed, "verify"), \
              patch.object(publication.feed, "validate_feed", return_value="signature"):
             publication.publish(self.local, self.directory / "tools", self.release["tag_name"])
@@ -182,13 +193,51 @@ class PublicationTests(unittest.TestCase):
         self.assertTrue(self.release["draft"])
         self.assertFalse(self.remote)
 
-    def test_older_or_equal_build_does_not_replace_latest(self):
-        self.latest = {"tag_name": "v0.0.9", "assets": [{"name": "appcast.xml", "state": "uploaded"}]}
-        self.remote["appcast.xml"] = b'<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><sparkle:version>3</sparkle:version></item></channel></rss>'
-        with self.assertRaises(ValueError):
-            self.publish()
-        self.assertTrue(self.release["draft"])
+    def test_channel_feed_publishes_only_after_release_readback(self):
+        observed = []
+        def publish_channels(*args):
+            observed.append(self.release["draft"])
+        with patch.object(publication.channels, "publish", side_effect=publish_channels):
+            # Use the normal fixtures, but do not mask the channels.publish observer.
+            with patch.object(publication, "gh_json", side_effect=self.gh), \
+                 patch.object(publication.subprocess, "run", side_effect=self.run_command), \
+                 patch.object(publication.feed, "generate", side_effect=self.generate), \
+                 patch.object(publication.feed, "verify"), \
+                 patch.object(publication.channels, "prepare", return_value={"content": b"signed"}):
+                publication.publish(self.local, self.directory / "tools", "v0.1.0")
+        self.assertEqual(observed, [False])
 
+    def test_channel_preparation_failure_leaves_release_draft(self):
+        with patch.object(publication.channels, "prepare", side_effect=ValueError("old build")), \
+             patch.object(publication, "gh_json", side_effect=self.gh), \
+             patch.object(publication.subprocess, "run", side_effect=self.run_command), \
+             patch.object(publication.feed, "generate", side_effect=self.generate), \
+             self.assertRaises(ValueError):
+            publication.publish(self.local, self.directory / "tools", "v0.1.0")
+        self.assertTrue(self.release["draft"])
+        self.assertFalse(self.remote)
+
+    def test_failed_channel_publication_can_retry_without_changing_release_assets(self):
+        with patch.object(publication.channels, "publish", side_effect=RuntimeError("GitHub unavailable")), \
+             patch.object(publication, "gh_json", side_effect=self.gh), \
+             patch.object(publication.subprocess, "run", side_effect=self.run_command), \
+             patch.object(publication.feed, "generate", side_effect=self.generate), \
+             patch.object(publication.feed, "verify"), \
+             patch.object(publication.channels, "prepare"), \
+             self.assertRaises(RuntimeError):
+            publication.publish(self.local, self.directory / "tools", "v0.1.0")
+        self.assertFalse(self.release["draft"])
+        before = dict(self.remote)
+        with patch.object(publication, "gh_json", side_effect=self.gh), \
+             patch.object(publication.subprocess, "run", side_effect=self.run_command), \
+             patch.object(publication.feed, "verify"), \
+             patch.object(publication.channels, "items", return_value={"stable": ET.fromstring(
+                 '<item><enclosure url="https://github.com/keelocker/keelocker/releases/download/v0.1.0/archive.dmg"/></item>')}), \
+             patch.object(publication.channels, "prepare"), \
+             patch.object(publication.channels, "publish") as publish_channels:
+            publication.refresh_channels(self.directory / "tools", "v0.1.0")
+            publish_channels.assert_called_once()
+        self.assertEqual(self.remote, before)
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,11 +39,13 @@ def normalize_notes(notes):
     return notes.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
-def validate_feed(feed, archive, info, download_url, expected_notes=None):
+def validate_feed(feed, archive, info, download_url, expected_notes=None, expected_channel=None):
     items = ET.fromstring(feed).findall("./channel/item")
     if len(items) != 1:
         raise ValueError("Expected exactly one update")
     item = items[0]
+    if expected_channel is not None and item.findtext(f"{{{NAMESPACE}}}channel", "stable") != expected_channel:
+        raise ValueError("Feed channel differs from release")
     if item.findtext(f"{{{NAMESPACE}}}version") != str(info["CFBundleVersion"]):
         raise ValueError("Feed build number does not match packaged app")
     if item.findtext(f"{{{NAMESPACE}}}minimumSystemVersion") not in ("14.0", "14.0.0"):
@@ -112,10 +114,12 @@ def generate(release_dir, tools, event):
         (stage / (archive.stem + ".md")).write_text(notes + "\n", encoding="utf-8")
         feed = stage / "appcast.xml"
         run_tool(tools, "generate_appcast", "--maximum-deltas", "0", "--maximum-versions", "1",
+            *(["--channel", "beta"] if release["prerelease"] else []),
             "--embed-release-notes", "--download-url-prefix", prefix,
             "--link", f"https://github.com/{REPOSITORY}/releases/tag/{tag}",
             "-o", feed, stage)
-        signature = validate_feed(feed.read_bytes(), archive, info, prefix + archive.name, notes)
+        signature = validate_feed(feed.read_bytes(), archive, info, prefix + archive.name, notes,
+                                  "beta" if release["prerelease"] else "stable")
         verify(tools, archive, signature)
         verify(tools, feed)
         destination = release_dir / "appcast.xml"

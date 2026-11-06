@@ -4,6 +4,40 @@ import Carbon
 
 @MainActor
 final class ToolbarHoverUITests: XCTestCase {
+    func testUpdateChannelSettingsLight() {
+        updateChannelSettings(appearance: "light")
+    }
+
+    func testUpdateChannelSettingsDark() {
+        updateChannelSettings(appearance: "dark")
+    }
+
+    private func updateChannelSettings(appearance: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--disable-updates", "--demo-vault", "--ignore-last-vault", "-appearance", appearance,
+                               "-updateChannel", "stable", "-automaticallyDownloadWebsiteIcons", "NO"]
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        let settings = app.buttons["sidebar.settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.click()
+        let picker = app.popUpButtons["settings.updateChannel"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(picker.isHittable)
+        picker.click()
+        app.menuItems["Beta"].click()
+        XCTAssertTrue(app.staticTexts["Receive stable releases and beta versions. Beta versions may contain unfinished features."].exists)
+        let settingsWindow = app.windows.containing(.popUpButton, identifier: "settings.updateChannel").firstMatch
+        let attachment = XCTAttachment(screenshot: settingsWindow.screenshot())
+        attachment.name = "update-channel-\(appearance)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        picker.click()
+        app.menuItems["Stable"].click()
+        XCTAssertTrue(app.staticTexts["Receive stable releases only. Switching from Beta waits for a newer stable release."].exists)
+    }
+
     func testVaultFooterSettingsAndLock() {
         vaultFooterSettingsAndLock(appearance: "light")
     }

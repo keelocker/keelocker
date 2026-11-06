@@ -5,10 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 MODE="${1:-help}"
-LABEL="${KEELOCKER_RELEASE_LABEL:-0.1.0-beta.3}"
+LABEL="${KEELOCKER_RELEASE_LABEL:-0.1.0-beta.4}"
 ARCHS="${KEELOCKER_RELEASE_ARCHS:-arm64 x86_64}"
 OUTPUT="${KEELOCKER_RELEASE_OUTPUT:-}"
-BUILD_NUMBER="${KEELOCKER_BUILD_NUMBER:-3}"
+BUILD_NUMBER="${KEELOCKER_BUILD_NUMBER:-4}"
+UPDATE_CHANNEL=stable
+[[ "$LABEL" != *-* ]] || UPDATE_CHANNEL=beta
 
 die() { echo "release: $*" >&2; exit 1; }
 usage() {
@@ -17,8 +19,8 @@ Usage: bash scripts/release.sh preflight|build|package APP
 Environment:
   KEELOCKER_RELEASE_OUTPUT    New absolute output directory (required except preflight)
   KEELOCKER_RELEASE_ARCHS     "arm64 x86_64" (default), arm64, or x86_64
-  KEELOCKER_RELEASE_LABEL     0.1.0-beta.3 (default), used for archive names
-  KEELOCKER_BUILD_NUMBER      3 (default), numeric CFBundleVersion
+  KEELOCKER_RELEASE_LABEL     0.1.0-beta.4 (default), used for archive names
+  KEELOCKER_BUILD_NUMBER      4 (default), numeric CFBundleVersion
 build invokes Release xcodebuild, then packages. package copies an existing Release app.
 Creates a compressed DMG containing KeeLocker.app and an Applications shortcut,
 plus SHA256SUMS.txt. No Developer ID certificate or notarization is required.
@@ -86,6 +88,7 @@ if [[ "$MODE" == build ]]; then
         -destination 'generic/platform=macOS' -derivedDataPath "$OUTPUT/DerivedData" \
         "ARCHS=$ARCHS" ONLY_ACTIVE_ARCH=NO MACOSX_DEPLOYMENT_TARGET=14.0 \
         "MARKETING_VERSION=$VERSION" "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
+        "KEELOCKER_UPDATE_CHANNEL=$UPDATE_CHANNEL" \
         CODE_SIGNING_ALLOWED=NO ENABLE_HARDENED_RUNTIME=YES build > "$OUTPUT/build.log" 2>&1
     SOURCE_APP="$OUTPUT/DerivedData/Build/Products/Release/KeeLocker.app"
 else
@@ -99,6 +102,7 @@ plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$PLIST"; }
 [[ "$(plist CFBundleIdentifier)" == com.keelocker.desktop ]] || die "Unexpected bundle ID"
 [[ "$(plist CFBundleShortVersionString)" == "$VERSION" ]] || die "App version differs from label"
 [[ "$(plist CFBundleVersion)" == "$BUILD_NUMBER" ]] || die "App build number differs"
+[[ "$(plist KeeLockerDefaultUpdateChannel)" == "$UPDATE_CHANNEL" ]] || die "App update channel differs from label"
 [[ "$(plist LSMinimumSystemVersion)" == 14.0 ]] || die "Unexpected minimum macOS"
 plutil -p "$PLIST" > "$OUTPUT/info-plist.txt"
 for notice in LICENSE THIRD_PARTY_NOTICES.md; do
@@ -108,7 +112,7 @@ find "$APP" -print > "$OUTPUT/bundle-files.txt"
 EXECUTABLE="$APP/Contents/MacOS/KeeLocker"
 FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
 [[ "$(plist SUPublicEDKey)" == "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$ROOT/KeeLocker/Updates/Info.plist")" ]] || die "Unexpected update public key"
-[[ "$(plist SUFeedURL)" == "https://github.com/keelocker/keelocker/releases/latest/download/appcast.xml" ]] || die "Unexpected update feed"
+[[ "$(plist SUFeedURL)" == "https://raw.githubusercontent.com/keelocker/keelocker/updates/appcast.xml" ]] || die "Unexpected update feed"
 [[ "$(plist SURequireSignedFeed)" == true && "$(plist SUVerifyUpdateBeforeExtraction)" == true ]] || die "Unsigned updates must be rejected"
 bash "$ROOT/scripts/sign-sparkle.sh" "$FRAMEWORK"
 SPARKLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$FRAMEWORK/Resources/Info.plist")"

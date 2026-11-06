@@ -4,9 +4,13 @@ name: Release DMG
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag and release draft to build, verify and publish
+        description: Existing release tag (draft for publication, published for channel retry)
         required: true
         type: string
+      refresh_channels:
+        description: Only retry channel feed publication for an already published release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,6 +40,12 @@ jobs:
         with:
           ref: refs/tags/${{ inputs.tag }}
           persist-credentials: false
+      - name: Load publishing tools from the selected workflow revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          persist-credentials: false
       - name: Resolve candidate version
         run: |
           label="${RELEASE_TAG#v}"
@@ -54,18 +64,24 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: test -n "$SPARKLE_PRIVATE_KEY"
       - name: Install Rust and both macOS targets
+        if: ${{ !inputs.refresh_channels }}
         run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin --target x86_64-apple-darwin
       - name: Fetch locked dependency sources for notices
+        if: ${{ !inputs.refresh_channels }}
         run: cargo fetch --locked
       - name: Build and inspect universal DMG
+        if: ${{ !inputs.refresh_channels }}
         run: bash scripts/release.sh build
+      - name: Resolve pinned Sparkle tools for channel refresh
+        if: ${{ inputs.refresh_channels }}
+        run: xcodebuild -resolvePackageDependencies -project KeeLocker.xcodeproj -scheme KeeLocker -derivedDataPath "$KEELOCKER_RELEASE_OUTPUT/DerivedData"
       - name: Verify draft assets and publish
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: >-
-          python3 scripts/publish-update.py
-          --release-dir "$KEELOCKER_RELEASE_OUTPUT"
-          --tools "$KEELOCKER_RELEASE_OUTPUT/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
-          --tag "$RELEASE_TAG"
+          REFRESH_CHANNELS: ${{ inputs.refresh_channels }}
+        run: |
+          arguments=(--release-dir "$KEELOCKER_RELEASE_OUTPUT" --tools "$KEELOCKER_RELEASE_OUTPUT/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin" --tag "$RELEASE_TAG")
+          if [[ "$REFRESH_CHANNELS" == true ]]; then arguments+=(--refresh-channels); fi
+          python3 .release-tools/scripts/publish-update.py "${arguments[@]}"
