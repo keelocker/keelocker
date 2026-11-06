@@ -5,10 +5,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 MODE="${1:-help}"
-LABEL="${KEELOCKER_RELEASE_LABEL:-0.1.0-beta.4}"
+LABEL="${KEELOCKER_RELEASE_LABEL:-0.1.0-beta.5}"
 ARCHS="${KEELOCKER_RELEASE_ARCHS:-arm64 x86_64}"
 OUTPUT="${KEELOCKER_RELEASE_OUTPUT:-}"
-BUILD_NUMBER="${KEELOCKER_BUILD_NUMBER:-4}"
+BUILD_NUMBER="${KEELOCKER_BUILD_NUMBER:-5}"
 UPDATE_CHANNEL=stable
 [[ "$LABEL" != *-* ]] || UPDATE_CHANNEL=beta
 
@@ -19,8 +19,8 @@ Usage: bash scripts/release.sh preflight|build|package APP
 Environment:
   KEELOCKER_RELEASE_OUTPUT    New absolute output directory (required except preflight)
   KEELOCKER_RELEASE_ARCHS     "arm64 x86_64" (default), arm64, or x86_64
-  KEELOCKER_RELEASE_LABEL     0.1.0-beta.4 (default), used for archive names
-  KEELOCKER_BUILD_NUMBER      4 (default), numeric CFBundleVersion
+  KEELOCKER_RELEASE_LABEL     0.1.0-beta.5 (default), used for archive names
+  KEELOCKER_BUILD_NUMBER      5 (default), numeric CFBundleVersion
 build invokes Release xcodebuild, then packages. package copies an existing Release app.
 Creates a compressed DMG containing KeeLocker.app and an Applications shortcut,
 plus SHA256SUMS.txt. No Developer ID certificate or notarization is required.

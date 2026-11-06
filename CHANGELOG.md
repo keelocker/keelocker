@@ -1,11 +1,15 @@
 # Changelog
 
-## 0.1.0-beta.4, build 4 (unreleased candidate)
+## 0.1.0-beta.5, build 5 (unreleased candidate)
+
+- A new beta build for testing in-app download, installation and restart from beta.4. No application behavior changes.
+
+## 0.1.0-beta.4, build 4
 
 - Choose Stable or Beta updates in Settings. Both use a signed feed independent of GitHub's latest stable release.
 - Accept multiline release notes regardless of line endings.
 
-## 0.1.0-beta.3, build 3 (unreleased candidate)
+## 0.1.0-beta.3, build 3
 
 - Check for signed updates from the app menu or Settings, view release notes, and install over the current app with a guarded restart.
 
