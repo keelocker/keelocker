@@ -30,11 +30,30 @@ class FeedTests(unittest.TestCase):
             sparkle:edSignature="{base64.b64encode(bytes(64)).decode()}"/>
           </item></channel></rss>""")
 
-    def validate(self):
-        return feed.validate_feed(ET.tostring(self.xml), self.archive, self.info, self.url)
+    def validate(self, expected_notes=None):
+        return feed.validate_feed(ET.tostring(self.xml), self.archive, self.info, self.url, expected_notes)
 
     def test_matching_metadata(self):
         self.assertTrue(self.validate())
+
+    def test_notes_allow_xml_line_ending_normalization(self):
+        notes = "## Update\n\n- First item\n- Обновление & fixes"
+        self.xml.find("./channel/item/description").text = notes
+        for separator in ("\n", "\r\n", "\r"):
+            with self.subTest(separator=repr(separator)):
+                self.assertTrue(self.validate(notes.replace("\n", separator)))
+        self.assertTrue(self.validate("## Update\r\n\r\n- First item\n- Обновление & fixes"))
+
+    def test_changed_notes_are_rejected_even_with_crlf(self):
+        self.xml.find("./channel/item/description").text = "## Update\n\n- Original notes"
+        with self.assertRaises(ValueError):
+            self.validate("## Update\r\n\r\n- Changed notes")
+
+    def test_markdown_significant_whitespace_is_not_collapsed(self):
+        self.xml.find("./channel/item/description").text = "First line  \nSecond line"
+        self.assertTrue(self.validate("First line  \r\nSecond line"))
+        with self.assertRaises(ValueError):
+            self.validate("First line\r\nSecond line")
 
     def test_missing_signature(self):
         self.xml.find("./channel/item/enclosure").attrib.pop(f"{{{feed.NAMESPACE}}}edSignature")

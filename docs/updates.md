@@ -72,6 +72,9 @@ The release workflow requires this secret before building, then invokes
 tag/build/URL/archive length/signature and verifies both signatures. Secret
 material travels through stdin and is removed from child process environments.
 Local generation can use the Keychain account instead.
+Release notes normalize CRLF/CR line endings to LF before embedding and comparing
+with XML. Other content and Markdown whitespace must still match; resumed feeds
+use the same comparison.
 
 Create a reviewed tag and a release draft with nonempty notes and an increased
 numeric `CFBundleVersion`. Keep the release as a draft. In Actions, run

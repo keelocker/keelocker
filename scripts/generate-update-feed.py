@@ -34,6 +34,11 @@ def verify(tools, file, signature=None):
     run_tool(tools, "sign_update", "--verify", file, *([signature] if signature else []))
 
 
+def normalize_notes(notes):
+    # XML normalizes CRLF and CR to LF, including inside CDATA descriptions.
+    return notes.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def validate_feed(feed, archive, info, download_url, expected_notes=None):
     items = ET.fromstring(feed).findall("./channel/item")
     if len(items) != 1:
@@ -54,7 +59,7 @@ def validate_feed(feed, archive, info, download_url, expected_notes=None):
     notes = item.findtext("description")
     if not notes:
         raise ValueError("Missing release notes")
-    if expected_notes is not None and notes.strip() != expected_notes.strip():
+    if expected_notes is not None and normalize_notes(notes) != normalize_notes(expected_notes):
         raise ValueError("Release notes differ from the signed feed; use a new draft/tag")
     return signature
 
@@ -95,7 +100,7 @@ def generate(release_dir, tools, event):
     label = validate_release(info, release, event["repository"]["full_name"])
     if archive.name != f"KeeLocker-{label}-universal.dmg":
         raise ValueError("Only the universal DMG can be published as an update")
-    notes = (release.get("body") or "").strip()
+    notes = normalize_notes(release.get("body") or "")
     if not notes:
         raise ValueError("Add release notes before publishing")
     prefix = f"https://github.com/{REPOSITORY}/releases/download/{tag}/"
