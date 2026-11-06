@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>KeeLocker Updates</title><item>
+            <title>0.1.0</title>
+            <pubDate>Fri, 06 Nov 2026 17:39:06 +0000</pubDate>
+            <link>https://github.com/keelocker/keelocker/releases/tag/0.1.0-beta.4</link>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown">- Choose Stable or Beta updates in Settings. Beta includes both stable releases and beta versions.
+- Fix update checks for beta releases.
+- Keep your channel preference across app restarts and updates. Switching to Stable waits for a newer stable version without downgrading.
+</description>
+            <enclosure url="https://github.com/keelocker/keelocker/releases/download/0.1.0-beta.4/KeeLocker-0.1.0-beta.4-universal.dmg" length="10461152" type="application/octet-stream" sparkle:edSignature="91uLmPt4DhN15eBgXgpxoW3pEriMP00eTFoA+QP0gTsRdRjIBxkxGxDLaYF2pF82vOUOzUzH4c2sEgonrItqCg=="></enclosure>
+        </item>
+    </channel></rss><!-- sparkle-signatures:
+edSignature: GfL69nXhrUDv6i5sxM4qDe3t4+bgYUfz3AXl/IRmbvpwzKEyf5GorQJz5rjDoLwzbnxpPID+v9Ffy+x93apoCw==
+length: 1554
+-->
