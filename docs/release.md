@@ -7,7 +7,7 @@ This distribution method does not require an Apple Developer account.
 
 ## Version and build
 
-The channel-selector candidate is `0.1.0-beta.4`, build `4`. The Xcode app version remains
+The in-app update verification candidate is `0.1.0-beta.5`, build `5`. The Xcode app version remains
 numeric (`0.1.0`); the beta label belongs in the tag and DMG name. Increase the
 build number when replacing a candidate with fixes. The Rust crate version is
 independent of the app version.
@@ -26,7 +26,7 @@ installed. Apply the host wrapper, such as RTK, when required.
 ```sh
 bash scripts/release.sh preflight
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
-env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta4-dmg bash scripts/release.sh build
+env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta5-dmg bash scripts/release.sh build
 ```
 
 The default is universal (`arm64 x86_64`). Set `KEELOCKER_RELEASE_ARCHS=arm64`
@@ -35,7 +35,7 @@ directory. Set `KEELOCKER_RELEASE_LABEL` and `KEELOCKER_BUILD_NUMBER` to match
 the candidate when they differ from the script defaults.
 
 The script builds Release, packages `KeeLocker.app` with an Applications link,
-and creates `KeeLocker-0.1.0-beta.4-universal.dmg` and `SHA256SUMS.txt`. It checks
+and creates `KeeLocker-0.1.0-beta.5-universal.dmg` and `SHA256SUMS.txt`. It checks
 the app version, architectures, deployment target, system library dependencies
 and bundled licenses. Rust is statically linked. A local integrity signature
 and hardened runtime are applied during packaging; neither is an Apple Developer
@@ -47,7 +47,7 @@ beside the DMG; see [update trust and key setup](updates.md).
 To package an existing Release app:
 
 ```sh
-env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta4-package bash scripts/release.sh package /absolute/path/to/Release/KeeLocker.app
+env KEELOCKER_RELEASE_OUTPUT=/tmp/keelocker-beta5-package bash scripts/release.sh package /absolute/path/to/Release/KeeLocker.app
 ```
 
 Keep its original build log and source revision. Packaging cannot establish
@@ -57,7 +57,7 @@ from a failed build.
 ## GitHub release assets
 
 After approval, a maintainer creates a tag and a **draft** release for the reviewed
-revision, such as `0.1.0-beta.4`, using the [changelog](../CHANGELOG.md) for notes.
+revision, such as `0.1.0-beta.5`, using the [changelog](../CHANGELOG.md) for notes.
 Keep the release unpublished. Run **Actions → Release DMG → Run workflow** from
 the reviewed workflow revision and supply that tag. The workflow checks out the
 tag, uses publishing scripts from the selected workflow revision, uses the same
